@@ -36,7 +36,7 @@ lua-test:
 
 [private]
 _lua-test:
-    cmake -S . -B {{build_dir}}/lua-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_MODULE_EXAMPLE=ON -DROSETTA_BUILD_EXAMPLES=ON -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DBUILD_TESTING=ON
+    cmake -S . -B {{build_dir}}/lua-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_MODULE_EXAMPLE=ON -DROSETTA_BUILD_EXAMPLES=ON -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DROSETTA_BUILD_JULIA_EXAMPLES=OFF -DBUILD_TESTING=ON
     cmake --build {{build_dir}}/lua-tests --parallel
     ctest --test-dir {{build_dir}}/lua-tests --output-on-failure --parallel
 
@@ -52,7 +52,7 @@ r-test:
 
 [private]
 _r-test:
-    cmake -S . -B {{build_dir}}/r-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=ON -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DBUILD_TESTING=ON
+    cmake -S . -B {{build_dir}}/r-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=ON -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DROSETTA_BUILD_JULIA_EXAMPLES=OFF -DBUILD_TESTING=ON
     cmake --build {{build_dir}}/r-tests --parallel
     ctest --test-dir {{build_dir}}/r-tests --output-on-failure --parallel
 
@@ -62,7 +62,7 @@ python-test:
 
 [private]
 _python-test:
-    cmake -S . -B {{build_dir}}/python-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=ON -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DBUILD_TESTING=ON
+    cmake -S . -B {{build_dir}}/python-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=ON -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DROSETTA_BUILD_JULIA_EXAMPLES=OFF -DBUILD_TESTING=ON
     cmake --build {{build_dir}}/python-tests --parallel
     ctest --test-dir {{build_dir}}/python-tests --output-on-failure --parallel
 
@@ -72,7 +72,7 @@ python-repl:
 
 [private]
 _python-repl:
-    cmake -S . -B {{build_dir}}/python-repl -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=ON -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DBUILD_TESTING=OFF
+    cmake -S . -B {{build_dir}}/python-repl -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=ON -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DROSETTA_BUILD_JULIA_EXAMPLES=OFF -DBUILD_TESTING=OFF
     cmake --build {{build_dir}}/python-repl --parallel --target python-repl
 
 # Enter Nix and run Ruby runtime, capability, CLI and shared compiler/build tests.
@@ -81,7 +81,7 @@ ruby-test:
 
 [private]
 _ruby-test:
-    cmake -S . -B {{build_dir}}/ruby-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=ON -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DBUILD_TESTING=ON
+    cmake -S . -B {{build_dir}}/ruby-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=ON -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DROSETTA_BUILD_JULIA_EXAMPLES=OFF -DBUILD_TESTING=ON
     cmake --build {{build_dir}}/ruby-tests --parallel
     ctest --test-dir {{build_dir}}/ruby-tests --output-on-failure --parallel
 
@@ -91,7 +91,7 @@ ruby-repl:
 
 [private]
 _ruby-repl:
-    cmake -S . -B {{build_dir}}/ruby-repl -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=ON -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DBUILD_TESTING=OFF
+    cmake -S . -B {{build_dir}}/ruby-repl -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=ON -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DROSETTA_BUILD_JULIA_EXAMPLES=OFF -DBUILD_TESTING=OFF
     cmake --build {{build_dir}}/ruby-repl --parallel --target ruby-repl
 
 # Enter Nix and run Octave runtime, capability, CLI and shared compiler/build tests.
@@ -100,7 +100,7 @@ octave-test:
 
 [private]
 _octave-test:
-    cmake -S . -B {{build_dir}}/octave-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=ON -DBUILD_TESTING=ON
+    cmake -S . -B {{build_dir}}/octave-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=ON -DROSETTA_BUILD_JULIA_EXAMPLES=OFF -DBUILD_TESTING=ON
     cmake --build {{build_dir}}/octave-tests --parallel
     ctest --test-dir {{build_dir}}/octave-tests --output-on-failure --parallel
 
@@ -110,7 +110,7 @@ octave-repl:
 
 [private]
 _octave-repl:
-    cmake -S . -B {{build_dir}}/octave-repl -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=ON -DBUILD_TESTING=OFF
+    cmake -S . -B {{build_dir}}/octave-repl -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=ON -DROSETTA_BUILD_JULIA_EXAMPLES=OFF -DBUILD_TESTING=OFF
     cmake --build {{build_dir}}/octave-repl --parallel --target octave-repl
 
 # Enter Nix, build the bindings, and start Lua with `demo` already loaded.
@@ -139,3 +139,22 @@ run *args: build
 # Remove CMake build artifacts.
 clean:
     cmake -E rm -rf {{build_dir}}
+
+# Enter Nix and run Julia native/runtime and shared compiler/build tests.
+julia-test:
+    nix develop path:. --command just _julia-test
+
+[private]
+_julia-test:
+    cmake -S . -B {{build_dir}}/julia-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DROSETTA_BUILD_JULIA_EXAMPLES=ON -DBUILD_TESTING=ON
+    cmake --build {{build_dir}}/julia-tests --parallel
+    ctest --test-dir {{build_dir}}/julia-tests --output-on-failure --parallel
+
+# Enter Nix, build Julia bindings, and open Julia with the examples loaded.
+julia-repl:
+    nix develop path:. --command just _julia-repl
+
+[private]
+_julia-repl:
+    cmake -S . -B {{build_dir}}/julia-repl -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DROSETTA_BUILD_JULIA_EXAMPLES=ON -DBUILD_TESTING=OFF
+    cmake --build {{build_dir}}/julia-repl --parallel --target julia-repl

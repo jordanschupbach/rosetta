@@ -1,8 +1,8 @@
 # Rosetta
 
-Rosetta generates source code that connects C++ libraries to other languages through their native extension or FFI APIs. Lua uses a Lua 5.4 C API module loaded with `require`; R uses a native `.Call` bridge with R6, S3 or S4 interfaces; Python and Ruby use native extensions with owned classes; Octave uses native `.oct` modules with owned objects.
+Rosetta generates source code that connects C++ libraries to other languages through their native extension or FFI APIs. Lua uses a Lua 5.4 C API module loaded with `require`; R uses a native `.Call` bridge with R6, S3 or S4 interfaces; Python and Ruby use native extensions with owned classes; Octave uses native `.oct` modules with owned objects; Julia uses a generated `ccall` module and C ABI shared library.
 
-Rosetta itself is implemented in C++17, built with CMake, and tested with C++, Lua, R, Python, Ruby and Octave. This is a working prototype. It parses real C++ with Clang, keeps declarations in a shared model, and emits native bindings. Its long-term goal is coverage of every C++ feature through a native mapping, an explicit adapter, a concrete instantiation, or an opaque handle. An unrestricted C++ program cannot automatically have an equivalent interface in every language; ownership, specialization, and runtime policies sometimes need user input.
+Rosetta itself is implemented in C++17, built with CMake, and tested with C++, Lua, R, Python, Ruby, Octave and Julia. This is a working prototype. It parses real C++ with Clang, keeps declarations in a shared model, and emits native bindings. Its long-term goal is coverage of every C++ feature through a native mapping, an explicit adapter, a concrete instantiation, or an opaque handle. An unrestricted C++ program cannot automatically have an equivalent interface in every language; ownership, specialization, and runtime policies sometimes need user input.
 
 The Lua feature-family demo is complete through generated bindings and explicit native/Lua adapters. See the [feature coverage plan](docs/lua-feature-plan.md) for each contract and the [completion audit](docs/lua-coverage-audit.md) for implementation, test evidence and remaining product work.
 
@@ -54,6 +54,8 @@ Development commands:
 | `just ruby-repl` | Enter Nix and open IRB with demo/verification extensions loaded |
 | `just octave-test` | Enter Nix and run Octave runtime, capability, CLI and shared compiler/build tests |
 | `just octave-repl` | Enter Nix and open Octave with demo/verification modules loaded |
+| `just julia-test` | Enter Nix and run Julia runtime, capability, CLI and shared compiler/build tests |
+| `just julia-repl` | Enter Nix and open Julia with demo/verification modules loaded |
 | `just r-repl` | Enter Nix and start R with R6, S3 and S4 demos and feature bindings loaded |
 | `just lua-repl` | Enter Nix, build the demo bindings and start Lua with `demo` loaded |
 | `just run [ARGS...]` | Build and invoke Rosetta; show usage when no arguments are given |
@@ -375,6 +377,57 @@ rosetta_generate_octave(HEADER api.hpp MODULE library
 ```
 
 Enable `ROSETTA_BUILD_OCTAVE_EXAMPLES` for the repository modules, including the enum fixture in `examples/octave_values.hpp`. [OctaveExample.cmake](cmake/OctaveExample.cmake) queries include/library directories from `mkoctfile`, checks its interpreter version, and shows complete CMake targets. The core remains independent of Octave libraries. Examples reuse the same native-only headers/policies as R/Python/Ruby; the verification facade needs C++20 and thread support.
+
+## Julia
+
+Select Julia with `--language julia`. Generation writes C++ source and a Julia module; it does not require Julia headers or libraries:
+
+```sh
+just run examples/r_demo.hpp --language julia --module julia_demo \
+  --policy examples/r_demo.policy.json -o build/julia_demo.cpp \
+  --dump-ir build/julia_demo.json --depfile build/julia_demo.d
+clang++ -std=c++17 -shared -fPIC -pthread build/julia_demo.cpp -o build/julia_demo.so
+julia --startup-file=no --history-file=no -i build/julia_demo.jl
+```
+
+The interface defaults to the source output path with extension `.jl`; `--julia-output PATH` overrides it. Keep it beside the shared library named `MODULE.so` on Linux or `MODULE.dylib` on macOS. The interface uses `Libdl.dlext` to choose the suffix. Julia 1.10+ is the intended baseline; executable verification currently uses Julia 1.12.6 on Linux. No third-party Julia package is needed. The generated bridge follows Julia's [C calling and GC preservation rules](https://docs.julialang.org/en/v1/manual/calling-c-and-fortran-code/), without storing Julia references in native code.
+
+```julia
+const demo = julia_demo
+const Counter = demo.r_demo__Counter
+demo.r_demo__add(20, 22)       # 42
+c = Counter(20)
+c.add(22)                     # 42
+c.count = 7
+c.label = "Julia 😀"
+demo.r_demo__Counter__value(c) # 7
+try
+    println(c.label)
+finally
+    close(c)
+end
+```
+
+C++ namespaces flatten to double underscores. Selected classes become concrete mutable Julia owner types. Instance methods support `owner.method(args...)` and `Module.Owner__method(owner, args...)`; static methods use `Module.Owner__method(args...)`. Properties support ordinary dot reads and assignments, with const fields readonly. Public trailing defaults are honored for supported functions, methods and constructors. Void returns `nothing`. Top-level functions and owner types retain namespace-qualified names; bindings remain module-qualified rather than implicitly exported. Julia keywords and names used by the bridge are rejected as exports.
+
+Integer arguments accept machine integers through 64 bits, or finite whole `Float32`/`Float64` values within their consecutive-integer ranges (`2^24`/`2^53`), followed by C++ range checks. Signed results are `Int64`, unsigned results `UInt64`, preserving all supported integer bits. Bool requires `Bool`; float and double results use `Float32` and `Float64`. Non-finite numbers, complex values, arrays, `BigInt`, `Int128` and implicit Bool/numeric conversions are rejected. `std::string` and copied const-string references accept Julia strings (including `AbstractString` copies), preserving UTF-8, arbitrary bytes and embedded NULs without transcoding.
+
+Assignment and collections retain the same Julia owner. A native registry validates owner IDs and record types; explicit `close` is idempotent and invalidates all aliases. Finalizers release abandoned owners, while `try`/`finally` provides deterministic scope cleanup. Copy, deepcopy and Serialization of owners are rejected. Calls and destruction are serialized per native library, including calls from Julia threads. Native workers never access Julia; wait blocks the calling Julia thread, and close/finalization/shutdown cancels and joins pending workers. An exit hook clears remaining owners. Native libraries must remain loaded until process exit; use a fresh Julia process after rebuilding.
+
+Native failures become `RosettaError` with `kind` equal to `:allocation`, `:range`, `:index`, `:argument` or `:native`; conversion/API failures use `:conversion` and copy/serialization failures use `:ownership`. The private, version-checked C ABI returns status and copied result/error bytes; C++ exceptions never cross `ccall`. Julia copies output bytes before freeing them through the originating library.
+
+Run `just julia-test` for an isolated `build/julia-tests` build, or `just julia-repl` to load `demo`, `verify`, `Counter`, `Series`, `Worklist` and `AsyncTask` interactively. An existing Julia-enabled build supports `cmake --build build --target julia-repl`. CMake consumers can call:
+
+```cmake
+rosetta_generate_julia(HEADER api.hpp MODULE library
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/library.cpp"
+  JULIA_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/library.jl"
+  POLICY api.policy.json)
+add_library(library SHARED "${CMAKE_CURRENT_BINARY_DIR}/library.cpp")
+set_target_properties(library PROPERTIES PREFIX "")
+```
+
+The helper supports compiler/database, policy, IR and dependency options, and tracks both generated files. Enable `ROSETTA_BUILD_JULIA_EXAMPLES` for the repository modules. R-only CLI options are rejected. Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Automatic enums, containers/arrays, overloads, callbacks, class-valued/borrowed inputs/results, inheritance and Julia indexing/operator/iteration/async protocols remain open. The [Julia verification matrix](docs/roadmap.md#julia-verification) separates direct mappings from named native facades.
 
 ## Current Lua interface
 

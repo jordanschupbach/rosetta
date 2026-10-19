@@ -22,6 +22,7 @@
           pkgs.lua5_4
           pkgs.python3
           pkgs.ruby
+          pkgs.julia-bin
           pkgs.octave
           (pkgs.rWrapper.override { packages = [ pkgs.rPackages.R6 ]; })
         ];

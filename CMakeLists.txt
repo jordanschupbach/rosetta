@@ -32,6 +32,7 @@ add_library(rosetta_core
     src/python.cpp
     src/ruby.cpp
     src/octave.cpp
+    src/julia.cpp
     src/cli.cpp
     src/policy.cpp
     src/compilation_database.cpp
@@ -51,8 +52,14 @@ include(cmake/RExample.cmake)
 include(cmake/PythonExample.cmake)
 include(cmake/RubyExample.cmake)
 include(cmake/OctaveExample.cmake)
+include(cmake/JuliaExample.cmake)
 
 if(BUILD_TESTING)
+    add_executable(rosetta_julia_capability_tests tests/test_julia_capabilities.cpp)
+    target_link_libraries(rosetta_julia_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_julia_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_julia_capability_tests)
+    add_test(NAME julia_capabilities COMMAND rosetta_julia_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
     add_executable(rosetta_octave_capability_tests tests/test_octave_capabilities.cpp)
     target_link_libraries(rosetta_octave_capability_tests PRIVATE rosetta_core)
     target_include_directories(rosetta_octave_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")

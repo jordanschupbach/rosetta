@@ -201,6 +201,26 @@ int main(int argc, char** argv) {
             require(nlohmann::json::parse(rosetta::detail::read_file(generated_ir))["functions"][0]["result"]["canonical"] == "float",
                 "R regeneration retained stale types");
             require(build_fixture().find(r_regeneration) == std::string::npos, "R regeneration did not converge");
+            // Julia also generates a source/interface pair without needing a
+            // Julia installation at generation time.
+            auto julia_project = project;
+            julia_project.replace(julia_project.find("rosetta_generate_lua"), std::string("rosetta_generate_lua").size(), "rosetta_generate_julia");
+            rosetta::detail::write_file(root / "CMakeLists.txt", julia_project);
+            const auto julia_configured = rosetta::detail::run_process({argv[3], "-S", root.string(), "-B", (root / "ninja").string()});
+            require(julia_configured.exit_code == 0, julia_configured.output + julia_configured.error);
+            const std::string julia_regeneration = "Generating Julia bindings: fixture";
+            require(build_fixture().find(julia_regeneration) != std::string::npos, "Julia fixture did not generate");
+            auto julia_interface = generated;
+            julia_interface.replace_extension(".jl");
+            require(fs::exists(julia_interface), "Julia interface was not generated");
+            require(build_fixture().find(julia_regeneration) == std::string::npos, "Julia depfile did not converge");
+            fs::remove(julia_interface);
+            require(build_fixture().find(julia_regeneration) != std::string::npos && fs::exists(julia_interface), "missing Julia interface did not regenerate");
+            changed_file(leaf, "using Leaf = double;\n", generated);
+            require(build_fixture().find(julia_regeneration) != std::string::npos, "Julia transitive input edit did not regenerate");
+            require(nlohmann::json::parse(rosetta::detail::read_file(generated_ir))["functions"][0]["result"]["canonical"] == "double",
+                "Julia regeneration retained stale types");
+            require(build_fixture().find(julia_regeneration) == std::string::npos, "Julia regeneration did not converge");
             auto python_project = project;
             python_project.replace(python_project.find("rosetta_generate_lua"), std::string("rosetta_generate_lua").size(), "rosetta_generate_python");
             rosetta::detail::write_file(root / "CMakeLists.txt", python_project);

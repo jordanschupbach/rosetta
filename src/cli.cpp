@@ -5,6 +5,7 @@
 #include "rosetta/python.hpp"
 #include "rosetta/ruby.hpp"
 #include "rosetta/octave.hpp"
+#include "rosetta/julia.hpp"
 #include "rosetta/compilation_database.hpp"
 #include "process.hpp"
 #include "dependencies.hpp"
@@ -20,9 +21,10 @@ namespace {
 constexpr const char* usage = R"(Usage: rosetta HEADER --module NAME -o OUTPUT [options] [-- CLANG_FLAGS...]
 
 Generate native language bindings from a C++ header.
-  --language lua|r|python|ruby|octave  Target language (default: lua)
+  --language lua|r|python|ruby|octave|julia  Target language (default: lua)
   --object-system r6|s3|s4  R object system (default: r6)
   --r-output PATH       Generated R interface (default: OUTPUT with extension .R)
+  --julia-output PATH   Generated Julia interface (default: OUTPUT with extension .jl)
   --clang PATH           Clang executable (default: clang++)
   --dump-ir PATH         Export the normalized declaration model as JSON
   --depfile PATH         Export compiler-discovered inputs as a Make/Ninja depfile
@@ -40,7 +42,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
     try {
         std::string header, name, output, dump_ir, depfile, policy_path, clang = "clang++";
         std::string database_path, translation_unit;
-        std::string language = "lua", object_system, r_output;
+        std::string language = "lua", object_system, r_output, julia_output;
         std::optional<std::size_t> command_index;
         std::vector<std::string> extra_flags;
         bool skip = false;
@@ -54,7 +56,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             if (arg == "--skip-unsupported") { skip = true; continue; }
             if (arg == "--module" || arg == "--output" || arg == "-o" || arg == "--clang" ||
                 arg == "--dump-ir" || arg == "--depfile" || arg == "--policy" || arg == "--language" || arg == "--compile-commands" ||
-                arg == "--translation-unit" || arg == "--command-index" || arg == "--object-system" || arg == "--r-output") {
+                arg == "--translation-unit" || arg == "--command-index" || arg == "--object-system" || arg == "--r-output" || arg == "--julia-output") {
                 if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
                     throw BindingError("missing value for " + arg);
                 const auto& value = arguments[i];
@@ -69,6 +71,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
                 else if (arg == "--language") language = value;
                 else if (arg == "--object-system") object_system = value;
                 else if (arg == "--r-output") r_output = value;
+                else if (arg == "--julia-output") julia_output = value;
                 else if (arg == "--command-index") {
                     std::size_t index = 0;
                     const auto parsed = std::from_chars(value.data(), value.data() + value.size(), index);
@@ -82,7 +85,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         }
         if (header.empty() || name.empty() || output.empty())
             throw BindingError("HEADER, --module and --output are required; use --help for usage");
-        if (language != "lua" && language != "r" && language != "python" && language != "ruby" && language != "octave") throw BindingError("unsupported language: " + language);
+        if (language != "lua" && language != "r" && language != "python" && language != "ruby" && language != "octave" && language != "julia") throw BindingError("unsupported language: " + language);
         if (language != "r" && (!object_system.empty() || !r_output.empty()))
             throw BindingError("--object-system and --r-output require --language r");
         if (language == "r") {
@@ -91,6 +94,12 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
                 throw BindingError("unsupported R object system: " + object_system + "; currently supported: r6, s3, s4");
             if (r_output.empty()) { auto path = std::filesystem::path(output); path.replace_extension(".R"); r_output = path.string(); }
         }
+        if (language != "julia" && !julia_output.empty())
+            throw BindingError("--julia-output requires --language julia");
+        if (language == "julia" && julia_output.empty()) {
+            auto path = std::filesystem::path(output); path.replace_extension(".jl"); julia_output = path.string();
+        }
+        const auto interface_output = language == "julia" ? julia_output : r_output;
         if (database_path.empty() && (!translation_unit.empty() || command_index))
             throw BindingError("--translation-unit and --command-index require --compile-commands");
         const auto compilation = database_path.empty() ? std::optional<CompilationCommand>{} :
@@ -99,7 +108,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         const auto output_path = std::filesystem::weakly_canonical(output);
         const auto ir_path = dump_ir.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(dump_ir);
         const auto dep_path = depfile.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(depfile);
-        const auto r_path = r_output.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(r_output);
+        const auto interface_path = interface_output.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(interface_output);
         const auto same_file = [](const auto& a, const auto& b) {
             if (a == b) return true;
             std::error_code ec;
@@ -124,14 +133,14 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             for (const auto& path : protected_paths)
                 if (same_file(dep_path, path)) throw BindingError("dependency file and inputs/outputs must have distinct paths");
         }
-        if (!r_path.empty()) {
+        if (!interface_path.empty()) {
             std::vector<std::filesystem::path> protected_paths{input_path, output_path};
             if (!dump_ir.empty()) protected_paths.push_back(ir_path);
             if (!depfile.empty()) protected_paths.push_back(dep_path);
             if (!policy_path.empty()) protected_paths.push_back(std::filesystem::canonical(policy_path));
             if (compilation) { protected_paths.push_back(compilation->database); protected_paths.push_back(compilation->file); }
             for (const auto& path : protected_paths)
-                if (same_file(r_path, path)) throw BindingError("R interface and inputs/outputs must have distinct paths");
+                if (same_file(interface_path, path)) throw BindingError(language == "julia" ? "Julia interface and inputs/outputs must have distinct paths" : "R interface and inputs/outputs must have distinct paths");
         }
         const auto policy = policy_path.empty() ? BindingPolicy{} : load_policy(policy_path);
         std::vector<std::string> flags{"-std=c++17"};
@@ -144,12 +153,12 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             module.parse_context.command_index = compilation->index;
         }
         GeneratedSource generated;
-        std::string r_interface;
+        std::string language_interface;
         if (language == "r") {
             const auto system = object_system == "s3" ? RObjectSystem::s3 : object_system == "s4" ? RObjectSystem::s4 : RObjectSystem::r6;
             const auto r = generate_r(module, name, system, skip, policy);
             generated = {r.source, r.diagnostics};
-            r_interface = r.interface;
+            language_interface = r.interface;
         } else if (language == "python") {
             const auto python = generate_python(module, name, skip, policy);
             generated = {python.source, python.diagnostics};
@@ -159,21 +168,25 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         } else if (language == "octave") {
             const auto octave = generate_octave(module, name, skip, policy);
             generated = {octave.source, octave.diagnostics};
+        } else if (language == "julia") {
+            const auto julia = generate_julia(module, name, skip, policy);
+            generated = {julia.source, julia.diagnostics};
+            language_interface = julia.interface;
         } else generated = generate_lua(module, name, skip, policy);
         std::string dependency_contents;
         if (!depfile.empty()) {
             for (const auto& dependency : module.dependencies)
-                for (const auto& path : {output_path, ir_path, dep_path, r_path})
+                for (const auto& path : {output_path, ir_path, dep_path, interface_path})
                     if (!path.empty() && same_file(path, std::filesystem::path(dependency)))
                         throw BindingError("compiler inputs and generated outputs must have distinct paths");
             auto prerequisites = module.dependencies;
             if (!policy_path.empty()) prerequisites.push_back(std::filesystem::canonical(policy_path).string());
             if (compilation) { prerequisites.push_back(compilation->database.string()); prerequisites.push_back(compilation->file.string()); }
             dependency_contents = detail::dependency_rule(output_path, prerequisites);
-            if (!r_path.empty()) dependency_contents += detail::dependency_rule(r_path, prerequisites);
+            if (!interface_path.empty()) dependency_contents += detail::dependency_rule(interface_path, prerequisites);
         }
         detail::write_file(output_path, generated.source);
-        if (!r_path.empty()) detail::write_file(r_path, r_interface);
+        if (!interface_path.empty()) detail::write_file(interface_path, language_interface);
         if (!dump_ir.empty()) detail::write_file(ir_path, serialize_ir(module));
         if (!depfile.empty()) detail::write_file(dep_path, dependency_contents);
         for (const auto& diagnostic : generated.diagnostics) err << "warning: " << diagnostic << '\n';

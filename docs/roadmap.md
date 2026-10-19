@@ -152,6 +152,40 @@ Evidence: [octave.cpp](../src/octave.cpp), [octave_runtime.hpp](../src/octave_ru
 
 Next gates: copied matrices/containers and enum flags; native values/factories/borrows; retained callbacks; native Octave indexing/operator protocols and classdef integration; packaging and an Octave/platform matrix.
 
+## Julia verification
+
+Julia is the sixth backend. It emits a C ABI bridge and a Julia `ccall` module, reusing the shared model, policies, compiler/dependency tooling and native-only fixtures. `just julia-test` runs an isolated build and runtime/shared tests; `just julia-repl` opens the examples. This initial slice covers scalar and owned-class APIs; named native facades below demonstrate selected contracts rather than general automatic mappings.
+
+| Inventory family | Executable evidence now | Remaining Julia work |
+| --- | --- | --- |
+| Translation units/preprocessing | Shared parser/database tests, CLI/IR, two-output CMake regeneration and transitive inputs | Module/PCH replay, generated headers and cross compilation |
+| Names/identity/linkage | Flattened modules/types/methods, reserved/export collision guards and C linkage | Renaming, nested namespace modules and cross-library owner identity |
+| Fundamental types | Checked machine integers, exact Int64/UInt64 extremes, finite float/double, Bool | Extended types, BigInt, non-finite policies and vectorization |
+| Aliases/qualifiers | Scalar alias, copied const-string reference, const methods/readonly fields | Broader references, volatile/dependent qualifier adaptation |
+| Enums/constants | Explicit enum/variable rejection; native constant-expression facade | Julia enums/flags and constant exports |
+| Free functions | Positional/default arities, scalar/string/void calls and repeated recovery | Keywords, overload ranking and varargs |
+| Pointers/references | Registry IDs, record-type checks, closed/foreign owner guards | Values/factories/borrows, buffers and consuming transfer |
+| Arrays/strings | Copied AbstractString inputs, Unicode/arbitrary bytes/NULs, GC stress | Arrays/matrices, views and encoding policies |
+| Records/storage | Mutable/readonly fields, pimpl objects, union/bitfield/volatile guards | Aggregates, unions and storage/layout adapters |
+| Construction/destruction | Constructor failure, aliases, idempotent close, finalizers/GC, copy/serialization guards | Copy/move/factory/smart ownership policies and allocator faults |
+| Members/access | Selected constructors/methods/fields, static functions, defaults and access-policy guards | Ref-qualified methods, static data and richer introspection |
+| Inheritance/polymorphism | Native hierarchy/crosscast facades; direct inheritance rejection | Hierarchy identity/casts and Julia dispatch integration |
+| Operators/conversions | Native Series get/set/scale/text facade | Julia indexing, operators, iteration and conversion protocols |
+| Templates/concepts | Native maximum/Box/variadic/constrained-sum facades | Automatic configured instantiation and template families |
+| Standard library | Four worklist orders, mutation, empty/error/cleanup behavior | Recursive containers, optional/variant/products/time/filesystem |
+| Callbacks/reverse bindings | Callback types/policies rejected | Protected invocation, retention, reentrancy and thread entry |
+| Errors | Native typed/unknown/bad_alloc statuses, conversion errors, recovery and output cleanup | Status/expected/nested errors and fault injection |
+| Compile-time C++ | Native consteval/concept results; immediate functions rejected | Broader native facades and compiler negatives |
+| Concurrency/async | Threaded calls/close, task wait/result/failure/cancel/finalize/shutdown | Julia Task/event-loop dispatch and nonblocking async protocols |
+| ABI/platform extensions | Versioned private C ABI, per-library typed registry, Libdl suffix | Public reusable ABI, platform/version matrix and package artifacts |
+| Documentation/tooling | CLI, CMake helper, Nix test/REPL recipes and deterministic output | Packages, installed consumers and capability manifests |
+
+Evidence: [julia.cpp](../src/julia.cpp), [julia_runtime.hpp](../src/julia_runtime.hpp), [runtime tests](../tests/test_julia.jl), [capability tests](../tests/test_julia_capabilities.cpp) and [JuliaExample.cmake](../cmake/JuliaExample.cmake). Capability tests cover 26 strict/partial unsupported cases, policies/access/defaults, deterministic generation, CLI artifacts and interface output protection. Runtime tests reuse `r_demo.hpp` and `r_verification.hpp` and check the native loading path, numeric boundaries, binary strings, GC roots/finalizers, ownership errors, threaded close and native task shutdown. A 60-second worker is left rooted until interpreter exit under a bounded CTest timeout.
+
+Next gates: enum/container/array codecs; native values/factories/borrows; callbacks; Julia protocols and asynchronous dispatch; packaging and a Julia/platform matrix.
+
+Validation: all five Julia test groups passed with Julia 1.12.6 and Clang 19.1.7 on Linux, with generated native libraries compiled under warnings-as-errors. The selected 18-test regression suite also passed, covering Octave runtime/enum tests, all backend capability suites, and shared generator/compiler/dependency/CLI tests. Julia Base function names remain local to the generated module, and deleting a generated `.jl` interface triggers CMake regeneration. Other Julia versions and platforms remain unverified.
+
 ## Milestones
 
 | Phase | Work | Completion criteria |
@@ -160,7 +194,7 @@ Next gates: copied matrices/containers and enum flags; native values/factories/b
 | 1: reliable declaration foundation | Structured type graph, stable IDs and source locations, robust Clang adapter, compiler matrix, compilation databases, explicit selection/rename/ignore config, versioned manifests | Real dependency-heavy headers parse without leaking dependency declarations; every selected declaration has an emitted/adapted/rejected outcome; deterministic output |
 | 2: useful procedural APIs | Alias resolution in every position, enums, overload dispatch, defaults, constants, namespace tables, strings, buffer/length adapters and references with direction policies | Bind a real procedural library; boundary and ambiguity tests; no silent lossy integer conversion or lifetime assumptions |
 | 3: object model | Owned/borrowed userdata, constructors/destructors, methods, fields/properties, constness, copy/move, smart pointers, class identity | Bind a small class library; GC/explicit-close/destructor counters and sanitizers show no leaks or dangling borrowers |
-| 4: reusable ABI and additional languages (R, Python, Ruby and Octave started) | R6/S3/S4, initial CPython, MRI Ruby and Octave backends reuse extraction and policies; shared C shim, error protocol, ABI/version manifest and broader coverage remain planned | Same fixture libraries bind across runtimes; shared semantic extraction and ownership policies; no Lua-specific model nodes |
+| 4: reusable ABI and additional languages (R, Python, Ruby, Octave and Julia started) | R6/S3/S4, initial CPython, MRI Ruby, Octave and Julia backends reuse extraction and policies; shared C shim, error protocol, ABI/version manifest and broader coverage remain planned | Same fixture libraries bind across runtimes; shared semantic extraction and ownership policies; no Lua-specific model nodes |
 | 5: advanced C++ | Inheritance, operators, templates and standard containers, callbacks, virtual dispatch, policies for concurrency | Feature fixtures execute in both languages; ambiguous overloads and invalid policies produce precise diagnostics |
 | 6: broad language/platform support | C#/PInvoke, Java/JNI, JS native or Wasm, Swift/C, Go/cgo and others; packaging and platform matrix | Each backend has published capability coverage, native loading tests, documented runtime constraints, and distributable artifacts |
 
