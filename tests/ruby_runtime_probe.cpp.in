@@ -1,0 +1,48 @@
+// Exercise the exact emitted runtime with intentional Ruby nonlocal exits.
+#include <ruby.h>
+#include <climits>
+#include <cmath>
+#include <cstdio>
+#include <limits>
+#include <memory>
+#include <new>
+#include <stdexcept>
+#include <string>
+#include <type_traits>
+@ruby_test_runtime@
+namespace {
+int live = 0;
+struct Temporary {
+    std::string storage = std::string(4096, 'x');
+    Temporary() { ++live; }
+    ~Temporary() { --live; }
+};
+VALUE count(VALUE) { return INT2FIX(live); }
+VALUE run(VALUE) {
+    return rosetta_rb::guard([]() -> VALUE {
+        Temporary temporary;
+        return rosetta_rb::checked([]() -> VALUE { return rb_yield(Qnil); });
+    });
+}
+VALUE wrap_failure(VALUE) {
+    return rosetta_rb::guard([]() -> VALUE {
+        auto temporary = std::make_unique<Temporary>();
+        return rosetta_rb::checked([]() -> VALUE { rb_raise(rb_eTypeError, "Ruby allocation probe"); return Qnil; });
+    });
+}
+VALUE native_failure(VALUE) {
+    return rosetta_rb::guard([]() -> VALUE {
+        Temporary temporary;
+        throw std::invalid_argument("native exception probe");
+    });
+}
+}
+extern "C" {
+RUBY_FUNC_EXPORTED void Init_ruby_runtime_probe(void) {
+    VALUE module = rb_define_module("RubyRuntimeProbe");
+    rb_define_singleton_method(module, "live", RUBY_METHOD_FUNC(count), 0);
+    rb_define_singleton_method(module, "run", RUBY_METHOD_FUNC(run), 0);
+    rb_define_singleton_method(module, "wrap_failure", RUBY_METHOD_FUNC(wrap_failure), 0);
+    rb_define_singleton_method(module, "native_failure", RUBY_METHOD_FUNC(native_failure), 0);
+}
+}

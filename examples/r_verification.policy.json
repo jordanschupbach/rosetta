@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "classes": {
+    "r_verify::Series": { "ownership": "owned" },
+    "r_verify::Worklist": { "ownership": "owned" },
+    "r_verify::AsyncTask": { "ownership": "owned" }
+  }
+}

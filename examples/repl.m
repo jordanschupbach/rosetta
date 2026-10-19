@@ -1,0 +1,11 @@
+demo = octave_demo();
+verify = octave_verify();
+Counter = demo.r_demo__Counter;
+Series = verify.r_verify__Series;
+Worklist = verify.r_verify__Worklist;
+AsyncTask = verify.r_verify__AsyncTask;
+disp('Rosetta Octave extensions loaded as demo and verify.');
+disp('Try: demo.r_demo__add(20, 22)');
+disp('Classes: counter = Counter.new(20); counter.add(22); counter.close();');
+disp('Features: series = Series.new(); series.scaled_sum(2); clear series;');
+disp('List exports: fieldnames(demo), fieldnames(verify). Exit with exit or Ctrl-D.');

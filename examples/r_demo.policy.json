@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "classes": {
+    "r_demo::Counter": { "ownership": "owned" }
+  }
+}

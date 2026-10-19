@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "classes": {
+    "octave_values::Holder": { "ownership": "owned" }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "classes": {
+    "interop_b::Record": {
+      "ownership": "owned",
+      "returns": {
+        "readonly": "borrow_self"
+      }
+    }
+  }
+}

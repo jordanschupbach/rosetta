@@ -1,0 +1,41 @@
+if arg and arg[1] then package.preload.demo = assert(package.loadlib(arg[1], 'luaopen_demo')) end
+local demo = require('demo')
+local C, op = demo.demo__NativeBoundary, demo.demo__BoundaryOperation
+local function fails(f, text)
+    local ok, err = pcall(f)
+    assert(not ok, 'expected error')
+    if text then assert(tostring(err):find(text, 1, true), tostring(err)) end
+end
+local info = demo.demo__native_abi_info()
+assert(info.version == 1 and info.flags == 3)
+assert(info.pointer_bits >= 32 and info.size_bits >= 32 and info.allocator_size > 0)
+assert(info.byte_order == 1 or info.byte_order == 2)
+do
+    local a <close> = C.new(op.add, 20, 'native\0payload')
+    local b <close> = C.new(op.multiply, 3, '')
+    assert(a:apply(22) == 42 and b:apply(14) == 42)
+    assert(a:payload() == 'native\0payload' and b:payload() == '')
+    assert(a:with_callback(function(v) return b:apply(v) end, -6) == 42)
+    assert(a:with_callback(function(v) return v + 1 end, 21) == 42)
+    fails(function() a:with_callback(function() error('callback marker') end, 1) end, 'callback marker')
+    fails(function() a:with_callback(function() return {} end, 1) end)
+    fails(function() a:with_callback(function() return 2147483648 end, 1) end, 'out of range')
+    fails(function() a:with_callback(function() a:close(); return 1 end, 1) end)
+    local called = false
+    fails(function() a:with_callback(function() called = true; return 1 end, 2147483647) end, 'out of range')
+    assert(not called)
+    fails(function() a:apply(2147483648) end, 'out of range')
+    fails(function() b:apply(-2147483648) end, 'out of range')
+    local co = coroutine.create(function() a:with_callback(function() coroutine.yield() end, 1) end)
+    assert(not coroutine.resume(co))
+    coroutine.close(co)
+    assert(a:apply(22) == 42)
+    local shared <close> = a:share()
+    a:close()
+    assert(shared:payload() == 'native\0payload' and shared:apply(22) == 42)
+end
+fails(function() C.new(op.add, 2147483648, '') end, 'out of range')
+fails(function() C.new(op.add, 1, string.rep('x', 1024*1024+1)) end, 'out of range')
+collectgarbage('collect')
+assert(C.live() == 0)
+print('Native ABI boundary tests passed')
