@@ -101,22 +101,22 @@ GeneratedJuliaSource generate_julia(const Module& module, const std::string& nam
     };
     auto body = [&](const Function& fn, const std::string& target, const std::string& owner) {
         std::ostringstream code;
-        code << "rosetta_jl::arity(count, " << fn.parameters.size() - fn.default_arguments << ", " << fn.parameters.size() << ");\nswitch (count) {\n";
+        code << "rosetta_abi::arity(count, " << fn.parameters.size() - fn.default_arguments << ", " << fn.parameters.size() << ");\nswitch (count) {\n";
         for (std::size_t count = fn.parameters.size() - fn.default_arguments; count <= fn.parameters.size(); ++count) {
             code << "case " << count << ": {\n";
             std::string actuals;
             for (std::size_t i = 0; i < count; ++i) {
-                code << "auto value" << i << " = rosetta_jl::from<" << scalar(fn.parameters[i]) << ">(args[" << i << "]);\n";
+                code << "auto value" << i << " = rosetta_abi::from<" << scalar(fn.parameters[i]) << ">(args[" << i << "]);\n";
                 if (i) actuals += ", ";
                 actuals += "value" + std::to_string(i);
             }
             if (fn.is_constructor)
-                code << "return rosetta_jl::to(rosetta_jl::own(std::make_unique<::" << owner << ">(" << actuals << ")));\n";
+                code << "return rosetta_abi::to(rosetta_abi::own(std::make_unique<::" << owner << ">(" << actuals << ")));\n";
             else if (fn.result.canonical == "void") code << target << '(' << actuals << "); return {};\n";
-            else code << "auto result = " << target << '(' << actuals << "); return rosetta_jl::to(result);\n";
+            else code << "auto result = " << target << '(' << actuals << "); return rosetta_abi::to(result);\n";
             code << "}\n";
         }
-        code << "}\nthrow rosetta_jl::conversion_error(\"invalid argument dispatch\");\n";
+        code << "}\nthrow rosetta_abi::conversion_error(\"invalid argument dispatch\");\n";
         return code.str();
     };
     auto entry = [&](const std::string& key, const std::string& code) {
@@ -194,7 +194,7 @@ GeneratedJuliaSource generate_julia(const Module& module, const std::string& nam
             if (!members.insert(fn.name).second) throw BindingError("reserved or duplicate Julia member: " + fn.name);
             const auto symbol = key + "__" + fn.name; reserve(symbol);
             const auto operation = key + "." + fn.name;
-            const auto target = fn.is_static ? "::" + owner + "::" + fn.name : "rosetta_jl::object<::" + owner + ">(id)->" + fn.name;
+            const auto target = fn.is_static ? "::" + owner + "::" + fn.name : "rosetta_abi::object<::" + owner + ">(id)->" + fn.name;
             entry(operation, body(fn, target, {}));
             if (fn.is_static) jl << "function " << symbol << " end\n" << symbol << "(args...) = _invoke(" << jlquote(operation) << ", 0, args...)\n";
             else {
@@ -208,13 +208,13 @@ GeneratedJuliaSource generate_julia(const Module& module, const std::string& nam
             if (scalar(field.type).empty() || field.bitfield || field.type.is_volatile) { reject(owner + "::" + field.name, "unsupported Julia field type"); continue; }
             if (!members.insert(field.name).second) throw BindingError("reserved or duplicate Julia member: " + field.name);
             const auto get = key + ".get." + field.name, set = key + ".set." + field.name;
-            entry(get, "rosetta_jl::arity(count, 0, 0); return rosetta_jl::to(rosetta_jl::object<::" + owner + ">(id)->" + field.name + ");\n");
+            entry(get, "rosetta_abi::arity(count, 0, 0); return rosetta_abi::to(rosetta_abi::object<::" + owner + ">(id)->" + field.name + ");\n");
             getters << "name === Symbol(" << jlquote(field.name) << ") && return _invoke(" << jlquote(get) << ", getfield(owner, :_id))\n";
             names << "Symbol(" << jlquote(field.name) << "),";
             setters << "if name === Symbol(" << jlquote(field.name) << ")\n";
             if (field.type.is_const) setters << "throw(RosettaError(:conversion, \"native property is readonly\"))\n";
             else {
-                entry(set, "rosetta_jl::arity(count, 1, 1); auto value = rosetta_jl::from<" + scalar(field.type) + ">(args[0]);\nrosetta_jl::object<::" + owner + ">(id)->" + field.name + " = value; return {};\n");
+                entry(set, "rosetta_abi::arity(count, 1, 1); auto value = rosetta_abi::from<" + scalar(field.type) + ">(args[0]);\nrosetta_abi::object<::" + owner + ">(id)->" + field.name + " = value; return {};\n");
                 setters << "_invoke(" << jlquote(set) << ", getfield(owner, :_id), value)\nreturn value\n";
             }
             setters << "end\n";
@@ -234,11 +234,11 @@ GeneratedJuliaSource generate_julia(const Module& module, const std::string& nam
     }
     out << "extern \"C\" {\nstd::uint64_t rosetta_" << name << "_abi() noexcept { return 1; }\n"
         << "void rosetta_" << name << "_free(const char* bytes) noexcept { std::free(const_cast<char*>(bytes)); }\n"
-        << "void rosetta_" << name << "_shutdown() noexcept {\nstd::lock_guard<std::mutex> lock(rosetta_jl::registry().mutex);\nrosetta_jl::registry().owners.clear();\n}\n"
-        << "void rosetta_" << name << "_call(const char* op, std::uint64_t id, const rosetta_jl::Value* args, std::size_t count, rosetta_jl::Result* result) noexcept {\n"
-        << "rosetta_jl::guard(result, [&]() -> rosetta_jl::Value {\n(void)args; (void)count;\nconst std::string operation(op);\n"
-        << "if (operation == \"__close\") { rosetta_jl::arity(count, 0, 0); rosetta_jl::registry().owners.erase(id); return {}; }\n"
-        << dispatch.str() << "throw rosetta_jl::conversion_error(\"unknown native operation\");\n});\n}\n}\n";
+        << "void rosetta_" << name << "_shutdown() noexcept {\nstd::lock_guard<std::mutex> lock(rosetta_abi::registry().mutex);\nrosetta_abi::registry().owners.clear();\n}\n"
+        << "void rosetta_" << name << "_call(const char* op, std::uint64_t id, const rosetta_abi::Value* args, std::size_t count, rosetta_abi::Result* result) noexcept {\n"
+        << "rosetta_abi::guard(result, [&]() -> rosetta_abi::Value {\n(void)args; (void)count;\nconst std::string operation(op);\n"
+        << "if (operation == \"__close\") { rosetta_abi::arity(count, 0, 0); rosetta_abi::registry().owners.erase(id); return {}; }\n"
+        << dispatch.str() << "throw rosetta_abi::conversion_error(\"unknown native operation\");\n});\n}\n}\n";
     jl << "end # module " << name << '\n';
     result.source = out.str(); result.interface = jl.str();
     return result;

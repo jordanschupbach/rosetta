@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "classes": {
+    "enum_test::Holder": { "ownership": "owned" }
+  }
+}

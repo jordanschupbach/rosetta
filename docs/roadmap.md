@@ -8,7 +8,7 @@ Supporting a language means implementing and testing a backend for its actual ru
 
 The completed Lua feature-family demonstration is tracked in [Lua feature coverage](lua-feature-plan.md) and its [completion audit](lua-coverage-audit.md). Every family below has a tested direct or explicit adapter mechanism. The milestones and individual subfeatures below continue to track broader automatic-generation, backend and platform work.
 
-R is now the second backend, with [R6](../README.md#r-and-r6), [S3 and S4](../README.md#s3-and-s4-classes) interfaces sharing the same native `.Call` source, scalar/string codecs and owned-class policies. S3 uses registered functional dispatch and S4 uses formal classes/methods. Reference classes and S7 remain future interfaces. The verification matrix distinguishes the initial native facades from outstanding R mappings.
+R is now the second backend, with [R6](../README.mepml#r-and-r6), [S3 and S4](../README.mepml#s3-and-s4-classes) interfaces sharing the same native `.Call` source, scalar/string codecs and owned-class policies. S3 uses registered functional dispatch and S4 uses formal classes/methods. Reference classes and S7 remain future interfaces. The verification matrix distinguishes the initial native facades from outstanding R mappings.
 
 ## R verification
 
@@ -186,6 +186,40 @@ Next gates: enum/container/array codecs; native values/factories/borrows; callba
 
 Validation: all five Julia test groups passed with Julia 1.12.6 and Clang 19.1.7 on Linux, with generated native libraries compiled under warnings-as-errors. The selected 18-test regression suite also passed, covering Octave runtime/enum tests, all backend capability suites, and shared generator/compiler/dependency/CLI tests. Julia Base function names remain local to the generated module, and deleting a generated `.jl` interface triggers CMake regeneration. Other Julia versions and platforms remain unverified.
 
+## Java verification
+
+Java is the seventh backend, generating compiled Java APIs and JNI libraries from the shared frontend, model, policies and native-only fixtures. `just java-test` builds an isolated JDK 17-bytecode/JNI configuration and shared tests. `just java-demo` compiles and runs the example main class; the README also has a Nix-backed compiled Java chunk.
+
+| Inventory family | Executable evidence now | Remaining Java work |
+| --- | --- | --- |
+| Translation units/preprocessing | Shared parser/database/IR and two-output dependency regeneration | Module/PCH replay, generated headers and cross compilation |
+| Names/identity/linkage | Flattened Java APIs, named packages, JNI underscore escaping, access/reserved/collision guards | Renaming policies, nested namespace packages, cross-library identity |
+| Fundamental types | Typed primitives, checked integer widths, full unsigned BigInteger transport, finite float/double | Extended types, numeric arrays and vectorization |
+| Aliases/qualifiers | Scalar alias, copied const-string reference, const methods/readonly getters | Broader references, volatile/dependent adaptation |
+| Enums/constants | Explicit enum/variable rejection and native constant-expression facade | Java enum/flag/constant exports |
+| Free functions | Static typed methods, defaults as Java overloads, void calls | C++ overload resolution, varargs and calling conventions |
+| Pointers/references | Opaque typed registry IDs, close and foreign-record guards | Class values/factories/borrows, buffers and ownership transfer |
+| Arrays/strings | Copied byte arrays, arbitrary bytes/NULs, Unicode and explicit UTF-8 helpers | Arrays/matrices, views and text policies |
+| Records/storage | Nested final owner classes, fields/accessors and pimpl fixtures | Aggregates, unions, bitfields and layout adapters |
+| Construction/destruction | Constructor failure, aliases, try-with-resources, Cleaner/GC, shutdown and serialization rejection | Copy/move/factory/smart ownership and allocator faults |
+| Members/access | Typed instance/static methods, private-policy guards, readonly fields, waitFor mapping | General member renaming, static data and introspection |
+| Inheritance/polymorphism | Native hierarchy/crosscast facades; C++ bases and Java subclassing excluded | Hierarchy identity/casts and directors |
+| Operators/conversions | Native Series get/set/scale/text facade | Java iterable/operator-style APIs and conversions |
+| Templates/concepts | Native maximum/Box/variadic/constrained-sum facades | Configured instantiation and broader template families |
+| Standard library | Four worklist orders, mutation/empty errors and cleanup | Recursive containers, optional/variant/products/time/filesystem |
+| Callbacks/reverse bindings | Callback types/policies rejected | Global reference retention, VM thread attachment, protected callbacks |
+| Errors | Standard Java exceptions, JNI checks, typed/unknown/bad_alloc native errors and recovery | Status/expected/nested errors, callback/allocator faults |
+| Compile-time C++ | Native consteval/concept facade and immediate-function rejection | Broader native facades and negative compiler fixtures |
+| Concurrency/async | Java calls racing close; native wait/result/failure/cancel/close/shutdown | CompletableFuture/executor integration and nonblocking dispatch |
+| ABI/platform extensions | Matching JDK JNI headers, typed Java 17 compilation, JAR/native loading, Xcheck:jni | JDK/platform matrix, native artifact distribution and class-loader isolation |
+| Documentation/tooling | CLI, CMake helper, Nix test/demo commands, README chunk, deterministic output | Maven/Gradle packages, installed consumers and manifests |
+
+Evidence: [java.cpp](../src/java.cpp), [java_runtime.hpp](../src/java_runtime.hpp), [runtime tests](../tests/TestJava.java), [capability tests](../tests/test_java_capabilities.cpp), [compiled example](../examples/JavaExample.java) and [JavaExample.cmake](../cmake/JavaExample.cmake). Capability tests cover 26 strict/partial unsupported cases, typed defaults, access/policies, accessor collisions, deterministic output, package/JNI spelling and CLI interface protection. Runtime tests compile and load generated classes/libraries, preserve signed/unsigned extremes and raw string bytes, reject invalid/native failures, verify Cleaner/close/aliases/threading, and leave a 60-second worker rooted at exit under a 30-second CTest timeout.
+
+Next gates: enum/container/array codecs; native values/factories/borrows; retained JNI callbacks; Java collections and async integration; packaged native distribution and a JDK/platform matrix.
+
+Validation: the isolated Java Nix recipe passed 14/14 CTests with OpenJDK 21.0.12 and Clang 21.1.8 on Linux, including all backend capability suites and shared generator/compiler/dependency/CLI tests. Generated JNI libraries and Java APIs compile with warnings treated as errors, and runtime tests use `-Xcheck:jni`. The README compiled Java chunk and MEP runner selection test also passed. Java 17 bytecode is targeted; other runtime JDKs and platforms remain unverified.
+
 ## Milestones
 
 | Phase | Work | Completion criteria |
@@ -194,7 +228,7 @@ Validation: all five Julia test groups passed with Julia 1.12.6 and Clang 19.1.7
 | 1: reliable declaration foundation | Structured type graph, stable IDs and source locations, robust Clang adapter, compiler matrix, compilation databases, explicit selection/rename/ignore config, versioned manifests | Real dependency-heavy headers parse without leaking dependency declarations; every selected declaration has an emitted/adapted/rejected outcome; deterministic output |
 | 2: useful procedural APIs | Alias resolution in every position, enums, overload dispatch, defaults, constants, namespace tables, strings, buffer/length adapters and references with direction policies | Bind a real procedural library; boundary and ambiguity tests; no silent lossy integer conversion or lifetime assumptions |
 | 3: object model | Owned/borrowed userdata, constructors/destructors, methods, fields/properties, constness, copy/move, smart pointers, class identity | Bind a small class library; GC/explicit-close/destructor counters and sanitizers show no leaks or dangling borrowers |
-| 4: reusable ABI and additional languages (R, Python, Ruby, Octave and Julia started) | R6/S3/S4, initial CPython, MRI Ruby, Octave and Julia backends reuse extraction and policies; shared C shim, error protocol, ABI/version manifest and broader coverage remain planned | Same fixture libraries bind across runtimes; shared semantic extraction and ownership policies; no Lua-specific model nodes |
+| 4: reusable ABI and additional languages (R, Python, Ruby, Octave, Julia and Java started) | R6/S3/S4, initial CPython, MRI Ruby, Octave, Julia and Java backends reuse extraction and policies; shared C shim, error protocol, ABI/version manifest and broader coverage remain planned | Same fixture libraries bind across runtimes; shared semantic extraction and ownership policies; no Lua-specific model nodes |
 | 5: advanced C++ | Inheritance, operators, templates and standard containers, callbacks, virtual dispatch, policies for concurrency | Feature fixtures execute in both languages; ambiguous overloads and invalid policies produce precise diagnostics |
 | 6: broad language/platform support | C#/PInvoke, Java/JNI, JS native or Wasm, Swift/C, Go/cgo and others; packaging and platform matrix | Each backend has published capability coverage, native loading tests, documented runtime constraints, and distributable artifacts |
 
@@ -283,3 +317,36 @@ Class-callback progress: a native `std::function<Record(Record)>` API now crosse
 Awaitable progress: a custom native C++20 co_await operation now schedules through an explicit owner-thread FIFO executor, with weak ready entries, shared task/driver ownership, suspended cancellation, stored completion/error results and prompt frame/callback release. A bounded Lua pumping layer demonstrates host-loop integration without implicit workers or cross-thread Lua entry. Runtime state/lifetime/error tests, wrong-thread rejection, scheduling under allocation exhaustion, native/Lua fault sweeps and shutdown cover the contract. General awaitable discovery, concurrent readiness/I/O integration and scheduler-policy generation remain pending.
 
 Cross-module progress: independently generated interop_a/interop_b modules now share native object identity through a common native library and versioned weak-registry tickets. Import acquires independent shared ownership; live mutation, source close/GC/VM shutdown, readonly export restrictions, invalid/expired ticket rejection and module-table reload are executable tests in both loading orders. The embedded host sweeps registry/creation/import/publication failures and checks shutdown balances. General automatic shared userdata ABI/type registration remains pending; this is an explicit reusable adapter.
+
+C# now has an initial compiled backend: a typed .NET API, shared native C ABI runtime, exact scalar/byte transport, policy-selected IDisposable/SafeHandle owners, properties, defaults, exception translation, namespace selection, CMake/CLI/dependency integration and Nix-backed runnable README examples. Runtime verification targets .NET 10 on Linux. Named enum bindings now preserve compiler-evaluated constants and expose typed parameters, results, constructors and properties. Signed and unsigned 64-bit endpoints, aliases, implicit increments, bool-backed native enums, native defaults, readonly fields, dependency enums and invalid input/result recovery have executable coverage in `tests/csharp_enums.hpp`, `tests/TestCSharp.cs` and the capability suite. Enum inputs and outputs require declared values; opaque/empty definitions, extended underlying integers and enum flag policies remain unsupported. Container/callback/class-value/inheritance mappings and Windows support remain future work.
+
+
+## Fortran verification
+
+Fortran now has a compiled Fortran 2018 backend over the shared private C ABI. `just fortran-test` builds the generated module sources and executes the native-only demonstration/verification facades with GNU Fortran. This initial backend covers scalar and explicit-close owned-handle APIs; it does not claim Lua feature parity.
+
+| Inventory family | Executable evidence now | Remaining Fortran work |
+| --- | --- | --- |
+| Translation units/preprocessing | Shared compiler/database tests and two-output Fortran dependency regeneration | Fortran-specific module/PCH replay and cross-compilation |
+| Names/identity/linkage | Flattened names, case-insensitive collision checks, 63-character limits, separate modules and C linkage | Nested/shared type identities across generated modules |
+| Fundamental types | Signed int64 endpoints, checked unsigned ranges, bool, float/double, finite-number checks | Full unsigned 64-bit values, extended numbers and Unicode scalar types |
+| Aliases/qualifiers | Scalar aliases, copied const-string inputs, const methods and readonly fields | General reference/volatile qualifiers |
+| Enums/constants | Direct enum/variable capability rejection; constant-expression facade | Typed enums/flags and constant exports |
+| Free functions | Typed positional/keyword arguments, native defaults, void subroutines and native exceptions | Overload selection and varargs |
+| Pointers/references | Private registry IDs, closed/uninitialized receiver rejection and shared assignment aliases | Borrowed/class-valued inputs/results and buffers |
+| Arrays/strings | Explicit byte lengths, empty/long/binary/UTF-8 strings, embedded NULs and trailing blanks | Arrays, spans/views, encoding policies and recursive codecs |
+| Records/storage | Mutable/readonly/string field accessors and native pimpl facades | Aggregates, unions, bitfields and layout adapters |
+| Construction/destruction | Explicit init/close, repeated close, failure-preserving reinit, module shutdown and process-exit destruction | Automatic ownership scopes, factories and copy/move policies |
+| Members/access | Instance/static methods, access policies, private rejection and accessor-name collision checks | Ref-qualified members and static data |
+| Inheritance/polymorphism | Native hierarchy/crosscast facade; direct base/abstract class guards | Native hierarchy identity and reverse overrides |
+| Operators/conversions | Native Series get/set/scale/text methods | Fortran operator/assignment adapters and iteration |
+| Templates/concepts | Native maximum/Box/variadic/constrained-sum instantiations | Automatic concrete instantiation policies |
+| Standard library | Four native worklist orders and empty-state errors | Recursive containers, optional/variant/products, time/filesystem |
+| Callbacks/reverse bindings | Function-pointer/std::function and callback-policy rejection | Callback ownership, reentrancy, thread entry and reverse calls |
+| Errors | Optional error status, typed native codes/messages, fatal no-status path and repeated recovery | Allocation-fault injection, status/expected/nested-error adapters |
+| Compile-time C++ | Native constant/concept facades; immediate-function rejection | Broader compiler-negative fixtures |
+| Concurrency/async | Native wait/result/failure/cancel/close and shutdown/exit worker joins | Fortran async protocols and concurrent handle access |
+| ABI/platform extensions | `ISO_C_BINDING` structs/procedures and linked native shared libraries | Compiler/data-model/platform matrix and disabled-exception facades |
+| Documentation/tooling | CLI, CMake helper, Nix commands, compiled example and runnable README runner | Installed/package distribution and capability manifests |
+
+Evidence: `src/fortran.cpp`, `src/fortran_runtime.hpp`, `tests/test_fortran.f90`, `tests/fortran_values.hpp`, `tests/test_fortran_capabilities.cpp`, `tests/test_dependencies.cpp` and `cmake/FortranExample.cmake`. Handles require explicit close: intrinsic assignment aliases the native ID, closing an alias invalidates all copies, and scope exit does not release an owner. Fortran integer transport is signed 64-bit; unsigned values outside that representable range are rejected. Errors use optional per-module `rosetta_error` status objects, or `error stop` when omitted. Capability tests cover 26 strict/partial rejection cases, policies/access, defaults, deterministic output, name limits/collisions, line wrapping, CLI artifacts and input protection.

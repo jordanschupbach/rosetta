@@ -242,6 +242,8 @@ int main(int argc, char** argv) {
             const auto module = f.parse("namespace api {\n enum class Mode : unsigned char { low = 2, high = 9, alias = high };\n using Choice = Mode;\n Choice echo(Choice value);\n}\n");
             require(module.enumerations.size() == 1 && module.enumerations[0].scoped, "scoped enum missing");
             require(module.enumerations[0].qualified_name() == "api::Mode" && module.enumerations[0].enumerators.size() == 3, "enum members");
+            require(module.enumerations[0].enumerator_values == std::vector<std::string>({"2", "9", "9"}) &&
+                module.enumerations[0].underlying_type == "unsigned char", "evaluated enum metadata");
             const auto& function = module.functions.at(0);
             require(function.result.kind == rosetta::TypeKind::enumeration && function.result.canonical == "api::Mode", "enum return alias");
             require(function.parameters.at(0).declaration == "api::Mode", "enum parameter identity");
@@ -250,12 +252,15 @@ int main(int argc, char** argv) {
             require(contains(generated.source, "\"api__Mode\"") && contains(generated.source, "unknown enum value"), "enum exports and validation");
             const auto json = nlohmann::json::parse(rosetta::serialize_ir(module));
             require(json["functions"][0]["result"]["kind"] == "enumeration" &&
-                    json["functions"][0]["location"]["line"] == 4, "structured IR metadata");
+                    json["functions"][0]["location"]["line"] == 4 && json["enumerations"][0]["enumerator_values"][2] == "9" &&
+                    json["enumerations"][0]["underlying_type"] == "unsigned char", "structured IR metadata");
         }},
         {"enum-only module and forward declarations", [](Fixture& f) {
             const auto module = f.parse("enum class Mode : int; enum class Mode : int { one = 1, two }; enum Plain { zero, next };\n");
             require(module.enumerations.size() == 2 && module.enumerations[0].enumerators.size() == 2, "enum redeclarations");
             require(!module.enumerations[1].scoped, "unscoped enum classification");
+            require(module.enumerations[0].enumerator_values == std::vector<std::string>({"1", "2"}) &&
+                module.enumerations[1].enumerator_values == std::vector<std::string>({"0", "1"}), "implicit enum values");
             require(contains(rosetta::generate_lua(module, "api").source, "\"Mode\""), "enum-only module rejected");
         }},
         {"dependency enums used without exporting dependencies", [](Fixture& f) {

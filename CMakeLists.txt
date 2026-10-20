@@ -33,6 +33,9 @@ add_library(rosetta_core
     src/ruby.cpp
     src/octave.cpp
     src/julia.cpp
+    src/fortran.cpp
+    src/csharp.cpp
+    src/java.cpp
     src/cli.cpp
     src/policy.cpp
     src/compilation_database.cpp
@@ -53,8 +56,26 @@ include(cmake/PythonExample.cmake)
 include(cmake/RubyExample.cmake)
 include(cmake/OctaveExample.cmake)
 include(cmake/JuliaExample.cmake)
+include(cmake/JavaExample.cmake)
+include(cmake/CSharpExample.cmake)
+include(cmake/FortranExample.cmake)
 
 if(BUILD_TESTING)
+    add_executable(rosetta_fortran_capability_tests tests/test_fortran_capabilities.cpp)
+    target_link_libraries(rosetta_fortran_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_fortran_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_fortran_capability_tests)
+    add_test(NAME fortran_capabilities COMMAND rosetta_fortran_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_csharp_capability_tests tests/test_csharp_capabilities.cpp)
+    target_link_libraries(rosetta_csharp_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_csharp_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_csharp_capability_tests)
+    add_test(NAME csharp_capabilities COMMAND rosetta_csharp_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_java_capability_tests tests/test_java_capabilities.cpp)
+    target_link_libraries(rosetta_java_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_java_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_java_capability_tests)
+    add_test(NAME java_capabilities COMMAND rosetta_java_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
     add_executable(rosetta_julia_capability_tests tests/test_julia_capabilities.cpp)
     target_link_libraries(rosetta_julia_capability_tests PRIVATE rosetta_core)
     target_include_directories(rosetta_julia_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
@@ -190,6 +211,9 @@ if(ROSETTA_BUILD_EXAMPLES)
         target_link_libraries(rosetta_scalar_test PRIVATE ${LUA_LIBRARIES})
         set_target_properties(rosetta_scalar_test PROPERTIES PREFIX "" OUTPUT_NAME baseline)
         rosetta_warnings(rosetta_scalar_test)
+        add_test(NAME readme_mep_runner COMMAND "${ROSETTA_LUA_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_readme_runners.lua")
+        set_tests_properties(readme_mep_runner PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
         add_test(NAME lua_scalar COMMAND "${ROSETTA_LUA_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_scalar.lua" "$<TARGET_FILE:rosetta_scalar_test>")
         add_executable(rosetta_lua_value_tests tests/test_lua_values.cpp "${generated_dir}/interop_a.cpp" "${generated_dir}/interop_b.cpp"

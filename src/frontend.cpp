@@ -25,6 +25,34 @@ std::string trim(std::string text) {
     return text.substr(begin, text.find_last_not_of(" \n\r\t") - begin + 1);
 }
 
+// Increment decimal text without imposing the generator host's integer width.
+std::string next_enum_value(std::string value) {
+    if (value.front() == '-') {
+        value.erase(0, 1);
+        for (std::size_t i = value.size(); i-- > 0;) {
+            if (value[i] != '0') { --value[i]; break; }
+            value[i] = '9';
+        }
+        if (value.size() > 1 && value.front() == '0') value.erase(0, 1);
+        return value == "0" ? value : "-" + value;
+    }
+    for (std::size_t i = value.size(); i-- > 0;) {
+        if (value[i] != '9') { ++value[i]; return value; }
+        value[i] = '0';
+    }
+    return "1" + value;
+}
+std::string enum_constant_value(const Json& node) {
+    if (node.value("kind", "") == "ConstantExpr" && node.contains("value"))
+        return node.at("value").get<std::string>();
+    if (node.contains("inner"))
+        for (const auto& child : node.at("inner")) {
+            auto value = enum_constant_value(child);
+            if (!value.empty()) return value;
+        }
+    return {};
+}
+
 class AstReader {
 public:
     explicit AstReader(std::string header) {
@@ -395,11 +423,22 @@ private:
         enumeration.namespaces = scopes;
         enumeration.owner = owner;
         enumeration.scoped = node.contains("scopedEnumTag");
+        if (node.contains("fixedUnderlyingType")) {
+            const auto& underlying = node.at("fixedUnderlyingType");
+            enumeration.underlying_type = underlying.value("desugaredQualType", underlying.value("qualType", ""));
+        }
         enumeration.selected = own;
         enumeration.location = source;
         const auto& children = node.contains("inner") ? node.at("inner") : empty_array;
-        for (const auto& child : children)
-            if (child.value("kind", "") == "EnumConstantDecl") enumeration.enumerators.push_back(child.at("name").get<std::string>());
+        for (const auto& child : children) {
+            if (child.value("kind", "") != "EnumConstantDecl") continue;
+            enumeration.enumerators.push_back(child.at("name").get<std::string>());
+            auto value = enum_constant_value(child);
+            if (value == "true") value = "1";
+            if (value == "false") value = "0";
+            if (value.empty()) value = enumeration.enumerator_values.empty() ? "0" : next_enum_value(enumeration.enumerator_values.back());
+            enumeration.enumerator_values.push_back(std::move(value));
+        }
         const auto key = enumeration.qualified_name();
         const auto previous = enum_indices_.find(key);
         if (previous == enum_indices_.end()) {

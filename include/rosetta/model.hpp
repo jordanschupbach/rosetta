@@ -87,6 +87,10 @@ struct Enumeration {
     SourceLocation location;
     std::string owner{};
 
+    // Decimal compiler-evaluated values, parallel to enumerators (no host-width loss).
+    std::vector<std::string> enumerator_values{};
+    std::string underlying_type{};
+
     std::string qualified_name() const;
 };
 

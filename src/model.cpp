@@ -75,7 +75,7 @@ std::string serialize_ir(const Module& module) {
     auto enumerations = Json::array();
     for (const auto& e : module.enumerations)
         enumerations.push_back({{"name", e.name}, {"namespaces", e.namespaces},
-            {"identity", e.qualified_name()}, {"enumerators", e.enumerators},
+            {"identity", e.qualified_name()}, {"enumerators", e.enumerators}, {"enumerator_values", e.enumerator_values}, {"underlying_type", e.underlying_type},
             {"scoped", e.scoped}, {"selected", e.selected}, {"owner", e.owner}, {"location", location_json(e.location)}});
     auto records = Json::array();
     for (const auto& r : module.records) {

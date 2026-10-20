@@ -1,3 +1,4 @@
 .direnv/
 build/
 dist/
+scripts/readme/__pycache__/
