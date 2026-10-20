@@ -1,37 +1,38 @@
 > Rosetta
 
-Rosetta generates source code that connects C\+\+ libraries to other languages through their native extension or FFI APIs. Lua uses a Lua 5.4 C API module loaded with `require`; R uses a native `.Call` bridge with R6, S3 or S4 interfaces; Python and Ruby use native extensions with owned classes; Octave uses native `.oct` modules with owned objects; Julia uses a generated `ccall` module and C ABI shared library; Java uses compiled Java classes and JNI libraries; C# uses generated .NET APIs and C ABI libraries; Fortran uses generated `ISO_C_BINDING` modules and C ABI libraries.
+Rosetta generates source code that connects C\+\+ libraries to other languages through their native extension or FFI APIs. Lua uses a Lua 5.4 C API module loaded with `require`; R uses a native `.Call` bridge with R6, S3 or S4 interfaces; Python and Ruby use native extensions with owned classes; Octave uses native `.oct` modules with owned objects; Julia uses a generated `ccall` module and C ABI shared library; Java uses compiled Java classes and JNI libraries; C# uses generated .NET APIs and C ABI libraries; Fortran uses generated `ISO_C_BINDING` modules and C ABI libraries; Common Lisp uses a generated CFFI package and C ABI shared library.
 
-Rosetta itself is implemented in C\+\+17, built with CMake, and tested with C\+\+, Lua, R, Python, Ruby, Octave, Julia, Java, C# and Fortran. This is a working prototype. It parses real C\+\+ with Clang, keeps declarations in a shared model, and emits native bindings. Its long-term goal is coverage of every C\+\+ feature through a native mapping, an explicit adapter, a concrete instantiation, or an opaque handle. An unrestricted C\+\+ program cannot automatically have an equivalent interface in every language; ownership, specialization, and runtime policies sometimes need user input.
+Rosetta itself is implemented in C\+\+17, built with CMake, and tested with C\+\+, Lua, R, Python, Ruby, Octave, Julia, Java, C#, Fortran and Common Lisp. This is a working prototype. It parses real C\+\+ with Clang, keeps declarations in a shared model, and emits native bindings. Its long-term goal is coverage of every C\+\+ feature through a native mapping, an explicit adapter, a concrete instantiation, or an opaque handle. An unrestricted C\+\+ program cannot automatically have an equivalent interface in every language; ownership, specialization, and runtime policies sometimes need user input.
 
 The Lua feature-family demo is complete through generated bindings and explicit native/Lua adapters. See the [feature coverage plan|docs/lua-feature-plan.md] for each contract and the [completion audit|docs/lua-coverage-audit.md] for implementation, test evidence and remaining product work.
 
 >> Running the code chunks
 
-Run this setup block once after opening this document in MEP. It enables the
-`nix-shell` chunk option using MEP's Babel language runners. Then run any language
-chunk with `C-c C-c`; only Nix needs to be installed on the host. Running the setup
-again is safe. Other documents' blocks keep their usual runners unless they also
-opt into `nix-shell`.
+Run any chunk in MEP with `C-c C-c`; only Nix (with flakes) needs to be
+installed on the host. Each chunk names one of this repository's flake shells
+with `nix-shell=".#readme-LANGUAGE"` (`readme-lua`, `readme-r`,
+`readme-python`, `readme-ruby`, `readme-octave`, `readme-julia`,
+`readme-java`, `readme-csharp`, `readme-fortran`, `readme-lisp` or `readme-shell`), which MEP
+enters with `nix develop` before running the chunk with the language's usual
+command (`lua`, `Rscript`, `python3`, `ruby`, `octave-cli`, `julia`,
+`javac`/`java`, `dotnet run` or `gfortran`; MEP has no Common Lisp runner, so
+Lisp chunks set `cmd` to an `sbcl` command line). Entering a language shell builds
+its modules in `build/readme/LANGUAGE`, then points the interpreter at them
+through its own startup hook (`LUA_INIT`, `R_PROFILE_USER`, a
+`sitecustomize` module, `RUBYOPT`, `OCTAVE_SITE_INITFILE` or Julia's
+`startup.jl`), so the names used below are available. All of this is defined
+in [flake.nix|flake.nix].
 
-```mep-lua
-return dofile((mep.filename():match("^(.*)/") or ".") .. "/scripts/readme/mep.lua")
-```
-
-Each language chunk selects `readme-lua`, `readme-r`, `readme-python`,
-`readme-ruby`, `readme-octave`, `readme-julia`, `readme-java`, `readme-csharp` or `readme-fortran` from this repository's flake.
-The runner builds the modules in `build/readme/LANGUAGE`, loads the examples,
-and executes the chunk in a fresh process with the names used below available.
 Chunks do not depend on an earlier REPL or share variables. The first run builds
 the native libraries; later runs rebuild changed inputs. Build messages go to
 stderr, and the chunk's stdout becomes its result. R chunks include the R6,
 S3 and S4 interfaces. Julia loads `julia_demo` and `julia_verify`; the example
-below defines its `demo` and `Counter` aliases. Java uses `rosetta-java` chunks
-with `main=yes`: MEP wraps the body in `Main`, and the runner invokes `javac`
-inside the Java shell before launching a JVM. Normal `java` blocks retain MEP's
-usual runner. C# chunks use top-level statements compiled with the generated API
-inside the .NET shell. Fortran uses complete programs in `rosetta-fortran`
-chunks, compiled against generated modules inside its Fortran shell.
+below defines its `demo` and `Counter` aliases. Java chunks use `main=yes`:
+MEP wraps the body in `Main` and compiles it with `javac`; the Java shell puts
+the generated API on `CLASSPATH` and the JNI libraries on the JVM's library
+path. C# chunks use top-level statements, and the .NET shell adds the
+generated API to the build. Fortran chunks are complete programs; the Fortran
+shell's compiler flags add the generated modules and libraries.
 
 Shell chunks select `readme-shell`, with the complete development toolchain;
 interactive commands use `results=exec` for a terminal. Commands with placeholder
@@ -39,27 +40,26 @@ paths are marked `eval=false` and still require your own library. JSON, CMake in
 signature sketches are displayed with `eval=false` because they are configuration
 or incomplete examples rather than standalone programs. The `library` Lua
 example also needs a user-supplied library and is marked `eval=false`. First use may download
-Nix dependencies. See [the runner|scripts/readme/run.py] and
-[the MEP adapter|scripts/readme/mep.lua] for the implementation.
+Nix dependencies.
 
 >> Try it
 
 Prerequisites: a C\+\+20 compiler for the demos (Rosetta's core remains C\+\+17), Clang for parsing input, CMake 3.20\+, Ninja, just, nlohmann/json 3.9\+ with its CMake package, and Lua 5.4 with development headers. Set `-DROSETTA_BUILD_EXAMPLES=OFF` to build the core with C\+\+17 without Lua. The compiler process adapter currently requires POSIX (Linux/macOS); Windows support is planned. The Nix flake supplies the development dependencies:
 
-```{sh, nix-shell="readme-shell", results=exec}
+```{sh, nix-shell=".#readme-shell", results=exec}
 just test
 just demo
 ```
 
 For an interactive Lua session, run this directly from the repository, including outside a Nix shell:
 
-```{sh, nix-shell="readme-shell", results=exec}
+```{sh, nix-shell=".#readme-shell", results=exec}
 just lua-repl
 ```
 
 This enters the flake's `lua-repl` shell, configures a separate `build/lua-repl` directory, builds Rosetta, the demo and the two interoperability modules, and starts Lua 5.4 with the library available as the global `demo`. You need Nix with flakes enabled and just on your host; the compiler, CMake, Ninja and Lua come from Nix. Subsequent invocations rebuild changed sources before starting the REPL.
 
-```{lua, nix-shell="readme-lua"}
+```{lua, nix-shell=".#readme-lua"}
 print(demo.demo__add(20, 22)) -- 42
 print(demo.demo__greet("Lua")) -- "Hello, Lua!"
 print(require("demo") == demo) -- true
@@ -104,7 +104,7 @@ Development commands:
 
 CMake also works directly, without just or Ninja:
 
-```{sh, nix-shell="readme-shell"}
+```{sh, nix-shell=".#readme-shell"}
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
@@ -116,7 +116,7 @@ Set `-DCMAKE_CXX_COMPILER=clang++` to choose the compiler used to build Rosetta,
 
 For your own library:
 
-```{sh, nix-shell="readme-shell", eval=false}
+```{sh, nix-shell=".#readme-shell", eval=false}
 build/rosetta include/library.hpp --module library \
   -o build/library_bindings.cpp --dump-ir build/library.json \
   -- -std=c++20 -Iinclude -DMY_LIBRARY_OPTION=1
@@ -134,7 +134,7 @@ Modules accepting callbacks need host thread support (`Threads::Threads` in CMak
 
 For an existing CMake project, enable `CMAKE_EXPORT_COMPILE_COMMANDS` and import a translation unit's settings:
 
-```{sh, nix-shell="readme-shell", eval=false}
+```{sh, nix-shell=".#readme-shell", eval=false}
 build/rosetta include/library.hpp --module library \
   --compile-commands project/build --translation-unit src/library.cpp \
   -o build/library_bindings.cpp --dump-ir build/library.json
@@ -152,7 +152,7 @@ Run `just r-test` to verify R support. It enters Nix, builds an isolated `build/
 
 The feature REPL exports include:
 
-```{r, nix-shell="readme-r"}
+```{r, nix-shell=".#readme-r"}
 r_verify$r_verify__maximum(20, 42)
 series <- r_verify$r_verify__Series$new(20, 2)
 series$text()           # "[20, 21]"; indices in this native facade start at zero
@@ -166,7 +166,7 @@ task$close()
 
 Select R with `--language r` and its object system with `--object-system r6`, `s3` or `s4`. R6 is the default for R. Lua remains the CLI default. All three R object systems share an identical native bridge, conversions and ownership policy; the selection changes the generated R interface. Unimplemented systems such as `r5` or `s7` fail explicitly. R-specific options are rejected for Lua.
 
-```{sh, nix-shell="readme-shell"}
+```{sh, nix-shell=".#readme-shell"}
 just run examples/r_demo.hpp --language r --object-system r6 \
   --module r_demo --policy examples/r_demo.policy.json \
   -o build/r_demo.cpp --r-output build/r_demo.R
@@ -178,7 +178,7 @@ The generated C\+\+ requires C\+\+17, R development headers, and the original li
 
 In R:
 
-```{r, nix-shell="readme-r"}
+```{r, nix-shell=".#readme-r"}
 r_demo$r_demo__add(20L, 22)  # 42
 counter <- r_demo$r_demo__Counter$new(20)
 counter$add(22)              # 42
@@ -207,7 +207,7 @@ Automatic C\+\+ overloads/inheritance, class-valued parameters/results, borrowed
 
 Generate an S3 interface with the same class policy:
 
-```{sh, nix-shell="readme-shell"}
+```{sh, nix-shell=".#readme-shell"}
 just run examples/r_demo.hpp --language r --object-system s3 \
   --module r_demo --policy examples/r_demo.policy.json \
   -o build/r_demo.cpp --r-output build/r_demo_s3.R
@@ -215,7 +215,7 @@ just run examples/r_demo.hpp --language r --object-system s3 \
 
 Use `--object-system s4` and `--r-output build/r_demo_s4.R` for S4. Both interfaces can use the same compiled `r_demo` shared library. After loading it with `dyn.load()`, source the chosen interface:
 
-```{r, nix-shell="readme-r"}
+```{r, nix-shell=".#readme-r"}
 r_demo <- r_s3$demo  # or r_s4$demo
 Counter <- r_demo$r_demo__Counter
 x <- Counter$new(20)
@@ -235,7 +235,7 @@ These are wrappers with reference semantics. Assignment and ordinary R copies sh
 
 `just r-repl` loads S3 examples as `r_s3$demo` and `r_s3$verify`, and S4 examples as `r_s4$demo` and `r_s4$verify`, alongside the existing R6 `r_demo`/`r_verify` lists. For example:
 
-```{r, nix-shell="readme-r"}
+```{r, nix-shell=".#readme-r"}
 Counter <- r_s4$demo$r_demo__Counter
 x <- Counter$new(20)
 Counter$add(x, 22)
@@ -255,7 +255,7 @@ It accepts the same compiler flags, compilation-database selectors and dependenc
 
 Select Python with `--language python`:
 
-```{sh, nix-shell="readme-shell"}
+```{sh, nix-shell=".#readme-shell"}
 just run examples/r_demo.hpp --language python --module python_demo \
   --policy examples/r_demo.policy.json -o build/python_demo.cpp \
   --dump-ir build/python_demo.json --depfile build/python_demo.d
@@ -267,7 +267,7 @@ Run `just python-test` to verify Python support through Nix in an isolated `buil
 
 Run `just python-repl` from the repository, including outside a Nix shell. Nix supplies Python and build dependencies, builds the extensions in `build/python-repl`, and opens an isolated Python session with `demo`, `verify`, `Counter`, `Series`, `Worklist` and `AsyncTask` loaded. Subsequent invocations rebuild changed sources. Exit with `exit()` or Ctrl-D.
 
-```{python, nix-shell="readme-python"}
+```{python, nix-shell=".#readme-python"}
 print(demo.r_demo__add(20, 22)) # 42
 with Counter(20) as counter:
     counter.add(22)           # 42
@@ -310,7 +310,7 @@ The helper accepts the same compiler, compilation-database and dependency option
 
 Select Ruby with `--language ruby`:
 
-```{sh, nix-shell="readme-shell"}
+```{sh, nix-shell=".#readme-shell"}
 just run examples/r_demo.hpp --language ruby --module ruby_demo \
   --policy examples/r_demo.policy.json -o build/ruby_demo.cpp \
   --dump-ir build/ruby_demo.json --depfile build/ruby_demo.d
@@ -322,7 +322,7 @@ Run `just ruby-test` for the isolated `build/ruby-tests` suite, including outsid
 
 Run `just ruby-repl` to build both extensions in `build/ruby-repl` and open IRB with `RubyDemo`, `RubyVerify`, `Counter`, `Series`, `Worklist` and `AsyncTask` loaded:
 
-```{ruby, nix-shell="readme-ruby"}
+```{ruby, nix-shell=".#readme-ruby"}
 puts RubyDemo.r_demo__add(20, 22) # 42
 Counter.open(20) do |counter|
   counter.add(22)           # 42
@@ -366,7 +366,7 @@ Enable `ROSETTA_BUILD_RUBY_EXAMPLES` for the repository examples; [RubyExample.c
 
 Select GNU Octave with `--language octave`:
 
-```{sh, nix-shell="readme-shell"}
+```{sh, nix-shell=".#readme-shell"}
 just run examples/r_demo.hpp --language octave --module octave_demo \
   --policy examples/r_demo.policy.json -o build/octave_demo.cpp \
   --dump-ir build/octave_demo.json --depfile build/octave_demo.d
@@ -379,7 +379,7 @@ Run `just octave-test` to build and test in an isolated `build/octave-tests` dir
 
 Run `just octave-repl` to build both modules in `build/octave-repl` and start a clean command-line Octave session with `demo`, `verify`, `Counter`, `Series`, `Worklist` and `AsyncTask` loaded:
 
-```{octave, nix-shell="readme-octave"}
+```{octave, nix-shell=".#readme-octave"}
 demo.r_demo__add(20, 22)       # int64(42)
 counter = Counter.new(20);
 cleanup = onCleanup(@() counter.close());
@@ -421,7 +421,7 @@ Enable `ROSETTA_BUILD_OCTAVE_EXAMPLES` for the repository modules, including the
 
 Select Julia with `--language julia`. Generation writes C\+\+ source and a Julia module; it does not require Julia headers or libraries:
 
-```{sh, nix-shell="readme-shell"}
+```{sh, nix-shell=".#readme-shell"}
 just run examples/r_demo.hpp --language julia --module julia_demo \
   --policy examples/r_demo.policy.json -o build/julia_demo.cpp \
   --dump-ir build/julia_demo.json --depfile build/julia_demo.d
@@ -431,7 +431,7 @@ julia --startup-file=no --history-file=no -i build/julia_demo.jl
 
 The interface defaults to the source output path with extension `.jl`; `--julia-output PATH` overrides it. Keep it beside the shared library named `MODULE.so` on Linux or `MODULE.dylib` on macOS. The interface uses `Libdl.dlext` to choose the suffix. Julia 1.10\+ is the intended baseline; executable verification currently uses Julia 1.12.6 on Linux. No third-party Julia package is needed. The generated bridge follows Julia's [C calling and GC preservation rules|https://docs.julialang.org/en/v1/manual/calling-c-and-fortran-code/], without storing Julia references in native code.
 
-```{julia, nix-shell="readme-julia"}
+```{julia, nix-shell=".#readme-julia"}
 const demo = julia_demo
 const Counter = demo.r_demo__Counter
 println(demo.r_demo__add(20, 22)) # 42
@@ -480,7 +480,7 @@ JDK 21 and the C++ toolchain. The intended Java baseline is 17.
 This chunk builds both libraries and the Java API JAR in `build/readme/java`,
 compiles the chunk with `javac`, and runs it in a fresh JVM:
 
-```{rosetta-java, nix-shell="readme-java", main=yes}
+```{java, main=yes, nix-shell=".#readme-java"}
 System.out.println(JavaDemo.r_demo__add(20, 22));
 try (var counter = new JavaDemo.r_demo__Counter(20)) {
     System.out.println(counter.add(22));
@@ -584,7 +584,7 @@ on Linux with .NET 10; the native compiler process adapter requires POSIX.
 This chunk compiles top-level statements with the generated APIs and runs them
 in a fresh .NET process:
 
-```{csharp, nix-shell="readme-csharp"}
+```{csharp, nix-shell=".#readme-csharp"}
 Console.WriteLine(CSharpDemo.r_demo__add(20, 22));
 using (var counter = new CSharpDemo.r_demo__Counter(20)) {
     Console.WriteLine(counter.add(22));
@@ -670,7 +670,7 @@ requires a Fortran compiler. `--fortran-output PATH` overrides the default
 `just fortran-test` builds the runtime, capability and dependency tests in the
 `readme-fortran` Nix shell.
 
-```{rosetta-fortran, nix-shell="readme-fortran"}
+```{fortran, nix-shell=".#readme-fortran"}
 program example
   use, intrinsic :: iso_c_binding
   use FortranDemo
@@ -748,6 +748,58 @@ inheritance remain unsupported. Strict generation rejects these declarations;
 backend has been tested with GNU Fortran on Linux; other compilers and platforms
 remain unverified.
 
+>> Common Lisp
+
+Select Common Lisp with `--language common-lisp`. Generation writes C\+\+ source for a private C ABI shared library and a `.lisp` interface that calls it through [CFFI|https://cffi.common-lisp.dev/]; it needs no Lisp installation:
+
+```{sh, nix-shell=".#readme-shell"}
+just run examples/r_demo.hpp --language common-lisp --module lisp_demo \
+  --policy examples/r_demo.policy.json -o build/lisp_demo.cpp
+extension=$([ "$(uname)" = Darwin ] && echo dylib || echo so)
+clang++ -std=c++17 -shared -fPIC -pthread build/lisp_demo.cpp -o build/lisp_demo.$extension
+sbcl --noinform --non-interactive --load build/lisp_demo.lisp \
+  --eval '(print (lisp_demo:r_demo__add 20 22))'
+```
+
+The interface defaults to the source output path with extension `.lisp`; `--lisp-output PATH` overrides it. Keep it beside the shared library named `MODULE.so` on Linux or `MODULE.dylib` on macOS. Loading it loads the ASDF systems `cffi` and `trivial-garbage` when they are not already present. The Nix shells provide SBCL with both. MEP has no built-in Common Lisp runner, so this chunk's `cmd` starts SBCL with a prelude from the `readme-lisp` shell that loads `lisp_demo` and `lisp_verify`:
+
+```{lisp, nix-shell=".#readme-lisp", cmd="sbcl --noinform --no-userinit --non-interactive --load $ROSETTA_README_PRELUDE --load {file}"}
+(print (lisp_demo:r_demo__add 20 22))                 ; 42
+(lisp_demo:with-owner (c (lisp_demo:r_demo__counter 20))
+  (print (lisp_demo:r_demo__counter__add c 22))       ; 42
+  (setf (lisp_demo:r_demo__counter__count c) 7
+        (lisp_demo:r_demo__counter__label c) "Lisp 😀")
+  (print (lisp_demo:r_demo__counter__value c))        ; 7
+  (print (lisp_demo:r_demo__counter__label c)))       ; "Lisp 😀"
+(lisp_verify:with-owner (s (lisp_verify:r_verify__series))
+  (print (lisp_verify:r_verify__series__scaled_sum s 2))) ; 82
+(handler-case (lisp_demo:r_demo__fail)
+  (lisp_demo:rosetta-error (e)
+    (print (list (lisp_demo:rosetta-error-kind e)     ; (:NATIVE "native failure")
+                 (lisp_demo:rosetta-error-message e)))))
+```
+
+Each module becomes a package named after it in upper case (`lisp_demo` is `LISP_DEMO`). C\+\+ namespaces flatten to double underscores, and exports are upcased symbols, so `r_demo::Counter` is `lisp_demo:r_demo__counter`; C\+\+ names that differ only in case are rejected. The public package uses no other package, so C\+\+ names such as `list` or `car` never touch `COMMON-LISP`. Runtime exports (`rosetta-error`, `rosetta-error-kind`, `rosetta-error-message`, `native-owner`, `with-owner`) contain hyphens and cannot collide with C\+\+ names. Selected classes become CLOS classes under `native-owner`; the class symbol also names its constructor function. Instance methods take the owner first (`(r_demo__counter__add c 22)`), static methods take none, and fields are accessor functions that work with `setf`, with const fields readonly. Public trailing defaults are honored. Void returns `NIL`.
+
+Integer arguments accept integers that fit in 64 bits, or finite whole `double-float`/`single-float` values within their consecutive-integer ranges, followed by C\+\+ range checks; results are integers. Bool requires `T` or `NIL`, and Bool results are `T`/`NIL`. Float and double results are `single-float` and `double-float`. Ratios, complex numbers, lists, non-byte vectors and out-of-range integers are rejected. `std::string` accepts Lisp strings, encoded as UTF-8, or `(unsigned-byte 8)` vectors as raw bytes, and embedded NULs are preserved. String results must be valid UTF-8 and are decoded to Lisp strings; other bytes signal a conversion error.
+
+A native registry validates owner IDs and record types. `close` (the standard generic function) is idempotent and invalidates every reference, `with-owner` closes on scope exit, and a trivial-garbage finalizer releases abandoned owners. Owners cannot be dumped to fasls (`make-load-form` signals). Calls and destruction are serialized per native library, including calls from Lisp threads; native workers never call into Lisp. Under SBCL, foreign calls run with floating-point traps masked, and an exit hook clears remaining owners, cancelling and joining pending workers.
+
+Native failures signal `rosetta-error` with `rosetta-error-kind` equal to `:allocation`, `:range`, `:index`, `:argument` or `:native`; conversion/API failures use `:conversion` and serialization uses `:ownership`. Each module has its own condition type. The private, version-checked C ABI is the one the Julia and C# backends use, and C\+\+ exceptions never cross it.
+
+Run `just lisp-test` for an isolated `build/lisp-tests` build, or `just lisp-repl` to open SBCL with `LISP_DEMO` and `LISP_VERIFY` loaded. CMake consumers can call:
+
+```{cmake, eval=false}
+rosetta_generate_common_lisp(HEADER api.hpp MODULE library
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/library.cpp"
+  LISP_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/library.lisp"
+  POLICY api.policy.json)
+add_library(library SHARED "${CMAKE_CURRENT_BINARY_DIR}/library.cpp")
+set_target_properties(library PROPERTIES PREFIX "")
+```
+
+Enable `ROSETTA_BUILD_COMMON_LISP_EXAMPLES` for the repository modules. Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Enums, containers, overloads, callbacks, class-valued/borrowed values and inheritance remain open. The interface is written against portable CFFI, but it has only been tested with SBCL 2.6.8 on macOS (arm64); other implementations and platforms remain unverified.
+
 >> Current Lua interface
 
 ```{cpp, eval=false}
@@ -756,7 +808,7 @@ int add(int a, int b);
 }
 ```
 
-```{lua, nix-shell="readme-lua", eval=false}
+```{lua, nix-shell=".#readme-lua", eval=false}
 local library = require("library")
 assert(library.math__add(20, 22) == 42)
 ```

@@ -36,6 +36,7 @@ add_library(rosetta_core
     src/fortran.cpp
     src/csharp.cpp
     src/java.cpp
+    src/common_lisp.cpp
     src/cli.cpp
     src/policy.cpp
     src/compilation_database.cpp
@@ -59,6 +60,7 @@ include(cmake/JuliaExample.cmake)
 include(cmake/JavaExample.cmake)
 include(cmake/CSharpExample.cmake)
 include(cmake/FortranExample.cmake)
+include(cmake/CommonLispExample.cmake)
 
 if(BUILD_TESTING)
     add_executable(rosetta_fortran_capability_tests tests/test_fortran_capabilities.cpp)
@@ -76,6 +78,11 @@ if(BUILD_TESTING)
     target_include_directories(rosetta_java_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     rosetta_warnings(rosetta_java_capability_tests)
     add_test(NAME java_capabilities COMMAND rosetta_java_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_common_lisp_capability_tests tests/test_common_lisp_capabilities.cpp)
+    target_link_libraries(rosetta_common_lisp_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_common_lisp_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_common_lisp_capability_tests)
+    add_test(NAME common_lisp_capabilities COMMAND rosetta_common_lisp_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
     add_executable(rosetta_julia_capability_tests tests/test_julia_capabilities.cpp)
     target_link_libraries(rosetta_julia_capability_tests PRIVATE rosetta_core)
     target_include_directories(rosetta_julia_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")

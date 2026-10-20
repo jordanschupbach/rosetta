@@ -220,6 +220,16 @@ Next gates: enum/container/array codecs; native values/factories/borrows; retain
 
 Validation: the isolated Java Nix recipe passed 14/14 CTests with OpenJDK 21.0.12 and Clang 21.1.8 on Linux, including all backend capability suites and shared generator/compiler/dependency/CLI tests. Generated JNI libraries and Java APIs compile with warnings treated as errors, and runtime tests use `-Xcheck:jni`. The README compiled Java chunk and MEP runner selection test also passed. Java 17 bytecode is targeted; other runtime JDKs and platforms remain unverified.
 
+## Common Lisp verification
+
+Common Lisp emits the C ABI bridge shared with Julia and C#, plus a CFFI interface package, reusing the shared model, policies, compiler/dependency tooling and native-only fixtures. `just lisp-test` runs an isolated build with runtime and shared tests; `just lisp-repl` opens SBCL with the examples. This initial slice covers scalar and owned-class APIs.
+
+Evidence: [common_lisp.cpp](../src/common_lisp.cpp), [common_lisp_runtime.hpp](../src/common_lisp_runtime.hpp), [runtime tests](../tests/test_common_lisp.lisp), [capability tests](../tests/test_common_lisp_capabilities.cpp) and [CommonLispExample.cmake](../cmake/CommonLispExample.cmake). Capability tests cover the same 26 strict/partial unsupported cases as Julia, plus policies/access/defaults, case-insensitive and qualified-name collisions, `COMMON-LISP` names staying local, deterministic generation and CLI artifacts. Runtime tests reuse `r_demo.hpp` and `r_verification.hpp` and check numeric boundaries, UTF-8 and byte strings, error kinds, GC during calls, finalizers, ownership errors, threaded close, native tasks and exit-time shutdown of a pending worker.
+
+Next gates: enum/container codecs; native values/factories/borrows; callbacks; CLOS protocols (sequences, printing, generic dispatch); ASDF system packaging and an implementation matrix (CCL, ECL).
+
+Validation: all five Common Lisp tests passed with SBCL 2.6.8, CFFI and trivial-garbage from nixpkgs and Clang on macOS (arm64), with generated native libraries compiled under warnings-as-errors. Other Lisp implementations and platforms remain unverified.
+
 ## Milestones
 
 | Phase | Work | Completion criteria |
@@ -228,7 +238,7 @@ Validation: the isolated Java Nix recipe passed 14/14 CTests with OpenJDK 21.0.1
 | 1: reliable declaration foundation | Structured type graph, stable IDs and source locations, robust Clang adapter, compiler matrix, compilation databases, explicit selection/rename/ignore config, versioned manifests | Real dependency-heavy headers parse without leaking dependency declarations; every selected declaration has an emitted/adapted/rejected outcome; deterministic output |
 | 2: useful procedural APIs | Alias resolution in every position, enums, overload dispatch, defaults, constants, namespace tables, strings, buffer/length adapters and references with direction policies | Bind a real procedural library; boundary and ambiguity tests; no silent lossy integer conversion or lifetime assumptions |
 | 3: object model | Owned/borrowed userdata, constructors/destructors, methods, fields/properties, constness, copy/move, smart pointers, class identity | Bind a small class library; GC/explicit-close/destructor counters and sanitizers show no leaks or dangling borrowers |
-| 4: reusable ABI and additional languages (R, Python, Ruby, Octave, Julia and Java started) | R6/S3/S4, initial CPython, MRI Ruby, Octave, Julia and Java backends reuse extraction and policies; shared C shim, error protocol, ABI/version manifest and broader coverage remain planned | Same fixture libraries bind across runtimes; shared semantic extraction and ownership policies; no Lua-specific model nodes |
+| 4: reusable ABI and additional languages (R, Python, Ruby, Octave, Julia, Java and Common Lisp started) | R6/S3/S4, initial CPython, MRI Ruby, Octave, Julia, Java and Common Lisp backends reuse extraction and policies; shared C shim, error protocol, ABI/version manifest and broader coverage remain planned | Same fixture libraries bind across runtimes; shared semantic extraction and ownership policies; no Lua-specific model nodes |
 | 5: advanced C++ | Inheritance, operators, templates and standard containers, callbacks, virtual dispatch, policies for concurrency | Feature fixtures execute in both languages; ambiguous overloads and invalid policies produce precise diagnostics |
 | 6: broad language/platform support | C#/PInvoke, Java/JNI, JS native or Wasm, Swift/C, Go/cgo and others; packaging and platform matrix | Each backend has published capability coverage, native loading tests, documented runtime constraints, and distributable artifacts |
 

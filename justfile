@@ -159,9 +159,28 @@ _julia-repl:
     cmake -S . -B {{build_dir}}/julia-repl -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DROSETTA_BUILD_JULIA_EXAMPLES=ON -DROSETTA_BUILD_JAVA_EXAMPLES=OFF -DROSETTA_BUILD_FORTRAN_EXAMPLES=OFF -DROSETTA_BUILD_CSHARP_EXAMPLES=OFF -DBUILD_TESTING=OFF
     cmake --build {{build_dir}}/julia-repl --parallel --target julia-repl
 
+# Enter Nix and run Common Lisp (SBCL/CFFI) runtime, capability and shared compiler/build tests.
+lisp-test:
+    nix develop path:. --command just _lisp-test
+
+[private]
+_lisp-test:
+    cmake -S . -B {{build_dir}}/lisp-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DROSETTA_BUILD_JULIA_EXAMPLES=OFF -DROSETTA_BUILD_JAVA_EXAMPLES=OFF -DROSETTA_BUILD_FORTRAN_EXAMPLES=OFF -DROSETTA_BUILD_CSHARP_EXAMPLES=OFF -DROSETTA_BUILD_COMMON_LISP_EXAMPLES=ON -DROSETTA_WARNINGS_AS_ERRORS=ON -DBUILD_TESTING=ON
+    cmake --build {{build_dir}}/lisp-tests --parallel
+    ctest --test-dir {{build_dir}}/lisp-tests --output-on-failure --parallel
+
+# Enter Nix, build Common Lisp bindings, and open SBCL with the examples loaded.
+lisp-repl:
+    nix develop path:. --command just _lisp-repl
+
+[private]
+_lisp-repl:
+    cmake -S . -B {{build_dir}}/lisp-repl -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DROSETTA_BUILD_JULIA_EXAMPLES=OFF -DROSETTA_BUILD_JAVA_EXAMPLES=OFF -DROSETTA_BUILD_FORTRAN_EXAMPLES=OFF -DROSETTA_BUILD_CSHARP_EXAMPLES=OFF -DROSETTA_BUILD_COMMON_LISP_EXAMPLES=ON -DBUILD_TESTING=OFF
+    cmake --build {{build_dir}}/lisp-repl --parallel --target lisp-repl
+
 # Enter Nix and run Java/JNI runtime, capability and shared compiler/build tests.
 java-test:
-    nix develop path:.#readme-java --command just _java-test
+    nix develop path:. --command just _java-test
 
 [private]
 _java-test:
@@ -171,7 +190,7 @@ _java-test:
 
 # Compile and run the Java example with its JNI libraries.
 java-demo:
-    nix develop path:.#readme-java --command just _java-demo
+    nix develop path:. --command just _java-demo
 
 [private]
 _java-demo:
@@ -180,7 +199,7 @@ _java-demo:
 
 # Build C# bindings and run the .NET verification suite.
 csharp-test:
-    nix develop path:.#readme-csharp --command just _csharp-test
+    nix develop path:. --command just _csharp-test
 
 [private]
 _csharp-test:
@@ -190,7 +209,7 @@ _csharp-test:
 
 # Compile and run the C# example with its native libraries.
 csharp-demo:
-    nix develop path:.#readme-csharp --command just _csharp-demo
+    nix develop path:. --command just _csharp-demo
 
 [private]
 _csharp-demo:
@@ -199,7 +218,7 @@ _csharp-demo:
 
 # Build Fortran bindings and run runtime, capability and tooling checks.
 fortran-test:
-    nix develop path:.#readme-fortran --command just _fortran-test
+    nix develop path:. --command just _fortran-test
 
 [private]
 _fortran-test:
@@ -209,7 +228,7 @@ _fortran-test:
 
 # Compile and run the Fortran example.
 fortran-demo:
-    nix develop path:.#readme-fortran --command just _fortran-demo
+    nix develop path:. --command just _fortran-demo
 
 [private]
 _fortran-demo:

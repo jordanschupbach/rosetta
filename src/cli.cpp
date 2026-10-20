@@ -9,6 +9,7 @@
 #include "rosetta/java.hpp"
 #include "rosetta/csharp.hpp"
 #include "rosetta/fortran.hpp"
+#include "rosetta/common_lisp.hpp"
 #include "rosetta/compilation_database.hpp"
 #include "process.hpp"
 #include "dependencies.hpp"
@@ -24,10 +25,11 @@ namespace {
 constexpr const char* usage = R"(Usage: rosetta HEADER --module NAME -o OUTPUT [options] [-- CLANG_FLAGS...]
 
 Generate native language bindings from a C++ header.
-  --language lua|r|python|ruby|octave|julia|java|csharp|fortran  Target language (default: lua)
+  --language lua|r|python|ruby|octave|julia|java|csharp|fortran|common-lisp  Target language (default: lua)
   --object-system r6|s3|s4  R object system (default: r6)
   --r-output PATH       Generated R interface (default: OUTPUT with extension .R)
   --julia-output PATH   Generated Julia interface (default: OUTPUT with extension .jl)
+  --lisp-output PATH    Generated Common Lisp interface (default: OUTPUT with extension .lisp)
   --java-output PATH    Generated Java interface (default: MODULE.java beside OUTPUT)
   --fortran-output PATH Generated Fortran interface (default: MODULE.f90 beside OUTPUT)
   --csharp-output PATH Generated C# interface (default: MODULE.cs beside OUTPUT)
@@ -50,7 +52,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
     try {
         std::string header, name, output, dump_ir, depfile, policy_path, clang = "clang++";
         std::string database_path, translation_unit;
-        std::string language = "lua", object_system, r_output, julia_output, java_output, java_package, csharp_output, csharp_namespace, fortran_output;
+        std::string language = "lua", object_system, r_output, julia_output, java_output, java_package, csharp_output, csharp_namespace, fortran_output, lisp_output;
         std::optional<std::size_t> command_index;
         std::vector<std::string> extra_flags;
         bool skip = false;
@@ -64,7 +66,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             if (arg == "--skip-unsupported") { skip = true; continue; }
             if (arg == "--module" || arg == "--output" || arg == "-o" || arg == "--clang" ||
                 arg == "--dump-ir" || arg == "--depfile" || arg == "--policy" || arg == "--language" || arg == "--compile-commands" ||
-                arg == "--translation-unit" || arg == "--command-index" || arg == "--object-system" || arg == "--r-output" || arg == "--julia-output" || arg == "--java-output" || arg == "--java-package" || arg == "--csharp-output" || arg == "--csharp-namespace" || arg == "--fortran-output") {
+                arg == "--translation-unit" || arg == "--command-index" || arg == "--object-system" || arg == "--r-output" || arg == "--julia-output" || arg == "--java-output" || arg == "--java-package" || arg == "--csharp-output" || arg == "--csharp-namespace" || arg == "--fortran-output" || arg == "--lisp-output") {
                 if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
                     throw BindingError("missing value for " + arg);
                 const auto& value = arguments[i];
@@ -83,6 +85,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
                 else if (arg == "--java-output") java_output = value;
                 else if (arg == "--java-package") java_package = value;
                 else if (arg == "--fortran-output") fortran_output = value;
+                else if (arg == "--lisp-output") lisp_output = value;
                 else if (arg == "--csharp-output") csharp_output = value;
                 else if (arg == "--csharp-namespace") csharp_namespace = value;
                 else if (arg == "--command-index") {
@@ -98,7 +101,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         }
         if (header.empty() || name.empty() || output.empty())
             throw BindingError("HEADER, --module and --output are required; use --help for usage");
-        if (language != "lua" && language != "r" && language != "python" && language != "ruby" && language != "octave" && language != "julia" && language != "java" && language != "csharp" && language != "fortran") throw BindingError("unsupported language: " + language);
+        if (language != "lua" && language != "r" && language != "python" && language != "ruby" && language != "octave" && language != "julia" && language != "java" && language != "csharp" && language != "fortran" && language != "common-lisp") throw BindingError("unsupported language: " + language);
         if (language != "r" && (!object_system.empty() || !r_output.empty()))
             throw BindingError("--object-system and --r-output require --language r");
         if (language == "r") {
@@ -112,6 +115,11 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         if (language == "julia" && julia_output.empty()) {
             auto path = std::filesystem::path(output); path.replace_extension(".jl"); julia_output = path.string();
         }
+        if (language != "common-lisp" && !lisp_output.empty())
+            throw BindingError("--lisp-output requires --language common-lisp");
+        if (language == "common-lisp" && lisp_output.empty()) {
+            auto path = std::filesystem::path(output); path.replace_extension(".lisp"); lisp_output = path.string();
+        }
         if (language != "java" && (!java_output.empty() || !java_package.empty())) throw BindingError("--java-output and --java-package require --language java");
         if (language == "java") {
             if (java_output.empty()) java_output = (std::filesystem::path(output).parent_path() / (name + ".java")).string();
@@ -122,7 +130,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         if (language == "csharp" && csharp_output.empty()) csharp_output = (std::filesystem::path(output).parent_path() / (name + ".cs")).string();
         if (language != "fortran" && !fortran_output.empty()) throw BindingError("--fortran-output requires --language fortran");
         if (language == "fortran" && fortran_output.empty()) fortran_output = (std::filesystem::path(output).parent_path() / (name + ".f90")).string();
-        const auto interface_output = language == "fortran" ? fortran_output : language == "csharp" ? csharp_output : language == "java" ? java_output : language == "julia" ? julia_output : r_output;
+        const auto interface_output = language == "common-lisp" ? lisp_output : language == "fortran" ? fortran_output : language == "csharp" ? csharp_output : language == "java" ? java_output : language == "julia" ? julia_output : r_output;
         if (database_path.empty() && (!translation_unit.empty() || command_index))
             throw BindingError("--translation-unit and --command-index require --compile-commands");
         const auto compilation = database_path.empty() ? std::optional<CompilationCommand>{} :
@@ -163,7 +171,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             if (!policy_path.empty()) protected_paths.push_back(std::filesystem::canonical(policy_path));
             if (compilation) { protected_paths.push_back(compilation->database); protected_paths.push_back(compilation->file); }
             for (const auto& path : protected_paths)
-                if (same_file(interface_path, path)) throw BindingError(language == "fortran" ? "Fortran interface and inputs/outputs must have distinct paths" : language == "csharp" ? "C# interface and inputs/outputs must have distinct paths" : language == "java" ? "Java interface and inputs/outputs must have distinct paths" :
+                if (same_file(interface_path, path)) throw BindingError(language == "common-lisp" ? "Common Lisp interface and inputs/outputs must have distinct paths" : language == "fortran" ? "Fortran interface and inputs/outputs must have distinct paths" : language == "csharp" ? "C# interface and inputs/outputs must have distinct paths" : language == "java" ? "Java interface and inputs/outputs must have distinct paths" :
                     language == "julia" ? "Julia interface and inputs/outputs must have distinct paths" : "R interface and inputs/outputs must have distinct paths");
         }
         const auto policy = policy_path.empty() ? BindingPolicy{} : load_policy(policy_path);
@@ -196,6 +204,10 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             const auto julia = generate_julia(module, name, skip, policy);
             generated = {julia.source, julia.diagnostics};
             language_interface = julia.interface;
+        } else if (language == "common-lisp") {
+            const auto lisp = generate_common_lisp(module, name, skip, policy);
+            generated = {lisp.source, lisp.diagnostics};
+            language_interface = lisp.interface;
         } else if (language == "fortran") {
             const auto fortran = generate_fortran(module, name, skip, policy);
             generated = {fortran.source, fortran.diagnostics};

@@ -4,10 +4,14 @@ if(ROSETTA_BUILD_OCTAVE_EXAMPLES)
     find_program(ROSETTA_MKOCTFILE_EXECUTABLE NAMES mkoctfile REQUIRED)
     execute_process(COMMAND "${ROSETTA_MKOCTFILE_EXECUTABLE}" --version
         OUTPUT_VARIABLE octave_version_text OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
-    string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" octave_VERSION "${octave_version_text}")
+    # Match the number after "version": the platform triple can contain one too
+    # (aarch64-apple-darwin25.6.0).
+    string(REGEX MATCH "version ([0-9]+\\.[0-9]+\\.[0-9]+)" octave_version_match "${octave_version_text}")
+    set(octave_VERSION "${CMAKE_MATCH_1}")
     execute_process(COMMAND "${ROSETTA_OCTAVE_EXECUTABLE}" --version
         OUTPUT_VARIABLE octave_interpreter_text ERROR_QUIET COMMAND_ERROR_IS_FATAL ANY)
-    string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" octave_interpreter_version "${octave_interpreter_text}")
+    string(REGEX MATCH "version ([0-9]+\\.[0-9]+\\.[0-9]+)" octave_interpreter_match "${octave_interpreter_text}")
+    set(octave_interpreter_version "${CMAKE_MATCH_1}")
     if(NOT octave_VERSION OR NOT octave_VERSION VERSION_EQUAL octave_interpreter_version)
         message(FATAL_ERROR "Octave interpreter and mkoctfile versions must match")
     endif()
