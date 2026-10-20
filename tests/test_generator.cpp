@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <functional>
 #include <iostream>
+#include <regex>
 #include <sstream>
 
 namespace {
@@ -18,6 +19,13 @@ void require(bool condition, const std::string& message) {
 
 bool contains(const std::string& text, const std::string& part) {
     return text.find(part) != std::string::npos;
+}
+
+// Drop standard-library inline ABI namespaces (libc++ std::__1::) so
+// assertions read the same across standard libraries.
+std::string std_name(const std::string& text) {
+    static const std::regex abi("std::__[A-Za-z0-9_]+::");
+    return std::regex_replace(text, abi, "std::");
 }
 
 template<class F> void rejects(F&& operation, const std::string& expected) {
@@ -298,7 +306,7 @@ int main(int argc, char** argv) {
                 "namespace/type aliases duplicated declarations");
             require(module.functions[0].result.canonical == "long" && module.functions[0].result.spelling == "Count", "imported typedef identity/spelling lost");
             require(module.functions[1].result.declaration == "real::Mode" && module.functions[2].parameters[0].arguments[0].declaration == "real::Object", "imported enum/record identity lost");
-            require(module.functions[3].result.declaration == "std::vector" && module.functions[3].result.arguments[0].declaration == "real::Mode", "namespace alias template/argument lookup failed");
+            require(std_name(module.functions[3].result.declaration) == "std::vector" && module.functions[3].result.arguments[0].declaration == "real::Mode", "namespace alias template/argument lookup failed");
             require(module.functions[4].result.declaration == "real::Mode" && module.functions[5].result.canonical == "long", "nested/chained namespace alias failed");
             rosetta::BindingPolicy policy; policy.classes["real::Object"] = {};
             require(rosetta::generate_lua(module, "api", false, policy).diagnostics.empty(), "namespace import generation rejected");
@@ -308,10 +316,10 @@ int main(int argc, char** argv) {
                 "namespace names { using std::vector; using std::optional; inline namespace v1 { using std::tuple; } "
                 "using Count = long; vector<Count> values(vector<Count>); optional<Count> option(); tuple<Count,int> product(); } "
                 "namespace target = names; target::vector<int> qualified();");
-            require(module.functions[0].result.declaration == "std::vector" && module.functions[0].result.arguments[0].canonical == "long",
+            require(std_name(module.functions[0].result.declaration) == "std::vector" && module.functions[0].result.arguments[0].canonical == "long",
                 "imported vector primary or argument scope lost");
-            require(module.functions[1].result.declaration == "std::optional" && module.functions[2].result.declaration == "std::tuple" &&
-                module.functions[3].result.declaration == "std::vector", "inline or namespace-qualified template import lost");
+            require(std_name(module.functions[1].result.declaration) == "std::optional" && std_name(module.functions[2].result.declaration) == "std::tuple" &&
+                std_name(module.functions[3].result.declaration) == "std::vector", "inline or namespace-qualified template import lost");
             rosetta::generate_lua(module, "api");
         }},
         {"dependency and inline imports retain nested identities", [](Fixture& f) {
@@ -387,7 +395,7 @@ int main(int argc, char** argv) {
                 "std::tuple<const std::string, bool> valid(std::pair<int, std::optional<double>>); "
                 "std::tuple<int&> borrowed(std::tuple<int&>); std::tuple<volatile int> vol(); "
                 "std::tuple<std::optional<std::optional<int>>> ambiguous();");
-            require(module.functions[0].result.arguments.empty() && module.functions[0].result.canonical == "std::tuple<>",
+            require(module.functions[0].result.arguments.empty() && std_name(module.functions[0].result.canonical) == "std::tuple<>",
                 "empty product had a phantom template argument");
             const auto generated = rosetta::generate_lua(module, "api", true);
             require(generated.diagnostics.size() == 3, "unsafe product elements accepted");

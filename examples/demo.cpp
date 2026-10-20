@@ -7,6 +7,7 @@
 #include <limits>
 #include <algorithm>
 #include <thread>
+#include <utility>
 #include <exception>
 
 namespace demo {
@@ -174,7 +175,9 @@ int fire_saved(int value) {
 }
 void clear_saved() { saved_callback = {}; }
 void clear_saved_on_worker() {
-    std::thread worker([callback = std::move(saved_callback)]() mutable { callback = {}; });
+    // std::exchange guarantees saved_callback is emptied; a moved-from
+    // std::function may still hold its target (libc++ copies small targets).
+    std::thread worker([callback = std::exchange(saved_callback, nullptr)]() mutable { callback = {}; });
     worker.join();
 }
 void store_text_callback(std::function<std::string()> callback) { saved_text_callback = std::move(callback); }

@@ -42,21 +42,30 @@ class Workspace {
         if (copy < 0) return false;
         DIR* stream = ::fdopendir(copy);
         if (!stream) { ::close(copy); return false; }
-        bool ok = true;
-        for (;;) {
-            errno = 0;
-            const auto* entry = ::readdir(stream);
-            if (!entry) { if (errno) ok = false; break; }
-            if (std::strcmp(entry->d_name, ".") == 0 || std::strcmp(entry->d_name, "..") == 0) continue;
-            struct stat status {};
-            if (::fstatat(descriptor, entry->d_name, &status, AT_SYMLINK_NOFOLLOW) != 0) { ok = false; continue; }
-            if (S_ISDIR(status.st_mode)) {
-                const int child = ::openat(descriptor, entry->d_name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-                if (child < 0) { ok = false; continue; }
-                if (!clear(child)) ok = false;
-                ::close(child);
-                if (::unlinkat(descriptor, entry->d_name, AT_REMOVEDIR) != 0) ok = false;
-            } else if (::unlinkat(descriptor, entry->d_name, 0) != 0) ok = false;
+        // Unlinking while iterating may skip entries on some filesystems
+        // (e.g. APFS on macOS), so rescan until a pass removes nothing.
+        bool ok = true, removed = true;
+        while (removed) {
+            removed = false;
+            ok = true;
+            ::rewinddir(stream);
+            for (;;) {
+                errno = 0;
+                const auto* entry = ::readdir(stream);
+                if (!entry) { if (errno) ok = false; break; }
+                if (std::strcmp(entry->d_name, ".") == 0 || std::strcmp(entry->d_name, "..") == 0) continue;
+                struct stat status {};
+                if (::fstatat(descriptor, entry->d_name, &status, AT_SYMLINK_NOFOLLOW) != 0) { ok = false; continue; }
+                if (S_ISDIR(status.st_mode)) {
+                    const int child = ::openat(descriptor, entry->d_name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+                    if (child < 0) { ok = false; continue; }
+                    if (!clear(child)) ok = false;
+                    ::close(child);
+                    if (::unlinkat(descriptor, entry->d_name, AT_REMOVEDIR) != 0) ok = false;
+                    else removed = true;
+                } else if (::unlinkat(descriptor, entry->d_name, 0) != 0) ok = false;
+                else removed = true;
+            }
         }
         ::closedir(stream);
         return ok;

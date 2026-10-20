@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <deque>
 #include <functional>
 #include <optional>
 #include <queue>
@@ -8,6 +9,7 @@
 #include <string>
 #include <type_traits>
 #include <variant>
+#include <utility>
 #include <vector>
 
 namespace feature_library::worklists {
@@ -32,10 +34,28 @@ class State {
         if constexpr (std::is_same_v<Adapter, Queue>) return value.front();
         else return value.top();
     }
+    // libc++'s std::deque copy constructor leaks already-copied elements when
+    // an element copy throws; assign() into an owned deque cleans up correctly.
+    template<class Adapter> static Adapter copy_adapter(const Adapter& source) {
+        if constexpr (std::is_same_v<typename Adapter::container_type, std::deque<std::string>>) {
+            struct Access : Adapter {
+                static const typename Adapter::container_type& items(const Adapter& value) { return value.*(&Access::c); }
+            };
+            const auto& items = Access::items(source);
+            typename Adapter::container_type copy;
+            copy.assign(items.begin(), items.end());
+            return Adapter(std::move(copy));
+        } else {
+            return source;
+        }
+    }
+    static Data copy(const Data& source) {
+        return std::visit([](const auto& value) -> Data { return copy_adapter(value); }, source);
+    }
 public:
     inline static std::atomic<int> alive{0};
     explicit State(int order) : order_(order), data_(make(order)) { ++alive; }
-    State(const State& other) : order_(other.order_), data_(other.data_) { ++alive; }
+    State(const State& other) : order_(other.order_), data_(copy(other.data_)) { ++alive; }
     State& operator=(const State&) = delete;
     ~State() { --alive; }
     int order() const { return order_; }
@@ -56,12 +76,12 @@ public:
         }, data_);
     }
     std::vector<std::string> snapshot() const {
-        auto copy = data_;
+        auto items = copy(data_);
         std::vector<std::string> result;
         std::visit([&](auto& value) {
             result.reserve(value.size());
             while (!value.empty()) { result.push_back(next(value)); value.pop(); }
-        }, copy);
+        }, items);
         return result;
     }
 };

@@ -8,6 +8,18 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
+#include <utility>
+
+#if defined(_LIBCPP_AVAILABILITY_HAS_FROM_CHARS_FLOATING_POINT) && !_LIBCPP_AVAILABILITY_HAS_FROM_CHARS_FLOATING_POINT
+#define FEATURE_LIBRARY_DOUBLE_FROM_CHARS 0
+#include <cctype>
+#include <cerrno>
+#include <clocale>
+#include <xlocale.h>
+#else
+#define FEATURE_LIBRARY_DOUBLE_FROM_CHARS 1
+#endif
 #include <vector>
 
 namespace feature_library::numeric {
@@ -95,10 +107,62 @@ inline std::string signed_multiply(std::string_view, std::string_view) { unavail
 inline std::string unsigned_multiply(std::string_view, std::string_view) { unavailable(); }
 #endif
 
+namespace detail {
+template <class T, class = void> struct has_from_chars : std::false_type {};
+template <class T>
+struct has_from_chars<T, std::void_t<decltype(std::from_chars(std::declval<const char*>(),
+    std::declval<const char*>(), std::declval<T&>(), std::chars_format::general))>> : std::true_type {};
+
+#if FEATURE_LIBRARY_DOUBLE_FROM_CHARS
+inline std::from_chars_result from_chars_double(const char* first, const char* last, double& value) {
+    return std::from_chars(first, last, value, std::chars_format::general);
+}
+#else
+// Older macOS deployment targets lack floating-point from_chars in libc++.
+// Emulate its general-format contract with locale-independent strtod_l.
+inline std::from_chars_result from_chars_double(const char* first, const char* last, double& value) {
+    const std::string text(first, last);
+    const char* digits = text.c_str() + (!text.empty() && text[0] == '-' ? 1 : 0);
+    if (*digits == '+' || std::isspace(static_cast<unsigned char>(*digits)))
+        return {first, std::errc::invalid_argument};
+    if (digits[0] == '0' && (digits[1] == 'x' || digits[1] == 'X')) { // general format never reads hex
+        value = text[0] == '-' ? -0.0 : 0.0;
+        return {first + (digits - text.c_str()) + 1, std::errc{}};
+    }
+    static const locale_t c_locale = newlocale(LC_ALL_MASK, "C", nullptr);
+    char* end = nullptr;
+    errno = 0;
+    const double parsed = strtod_l(text.c_str(), &end, c_locale);
+    if (end == text.c_str()) return {first, std::errc::invalid_argument};
+    const auto ptr = first + (end - text.c_str());
+    if (errno == ERANGE && (std::isinf(parsed) || parsed == 0)) return {ptr, std::errc::result_out_of_range};
+    value = parsed;
+    return {ptr, std::errc{}};
+}
+#endif
+
+// libc++ (macOS) has no long double from_chars. Where long double has the same
+// format as double (e.g. Apple arm64), parsing through double is exact.
+template <class T>
+std::from_chars_result from_chars_long_double(const char* first, const char* last, T& value) {
+    if constexpr (has_from_chars<T>::value) {
+        return std::from_chars(first, last, value, std::chars_format::general);
+    } else {
+        static_assert(std::numeric_limits<T>::digits == std::numeric_limits<double>::digits &&
+                std::numeric_limits<T>::max_exponent == std::numeric_limits<double>::max_exponent,
+            "this standard library lacks long double from_chars and long double is wider than double");
+        double parsed = 0;
+        const auto result = from_chars_double(first, last, parsed);
+        if (result.ec == std::errc{}) value = parsed;
+        return result;
+    }
+}
+} // namespace detail
+
 inline long double parse_float(std::string_view text) {
     if (text.empty()) throw std::invalid_argument("expected a complete decimal long double");
     long double value = 0;
-    const auto result = std::from_chars(text.data(), text.data() + text.size(), value, std::chars_format::general);
+    const auto result = detail::from_chars_long_double(text.data(), text.data() + text.size(), value);
     if (result.ec == std::errc::result_out_of_range) throw std::out_of_range("long double value is out of range");
     if (result.ec != std::errc{} || result.ptr != text.data() + text.size())
         throw std::invalid_argument("expected a complete decimal long double");

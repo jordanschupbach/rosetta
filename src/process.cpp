@@ -17,7 +17,11 @@ TemporaryDirectory::TemporaryDirectory() {
     auto pattern = (std::filesystem::temp_directory_path() / "rosetta-XXXXXX").string();
     if (!::mkdtemp(pattern.data()))
         throw BindingError("cannot create temporary directory: " + std::string(std::strerror(errno)));
-    path_ = pattern;
+    // Resolve symlinked temp roots (macOS /var -> /private/var) so callers
+    // comparing against canonicalized compiler/database paths agree.
+    std::error_code error;
+    const auto canonical = std::filesystem::canonical(pattern, error);
+    path_ = error ? std::filesystem::path(pattern) : canonical;
 }
 
 TemporaryDirectory::~TemporaryDirectory() {

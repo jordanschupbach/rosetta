@@ -652,8 +652,14 @@ private:
         if ((kind == "TypedefDecl" || kind == "TypeAliasDecl") && node.contains("type") && !anonymous) {
             type_ids_[node.at("id").get<std::string>()] = qualify(namespaces, name);
             const auto& type = node.at("type");
-            for (const auto& key : visible_names(namespaces, name))
-                aliases_[key] = {type.value("desugaredQualType", type.value("qualType", "")), namespaces};
+            const auto visible = visible_names(namespaces, name);
+            const auto written = type.value("qualType", "");
+            auto target = type.value("desugaredQualType", written);
+            // libc++ marks basic_string<char> with [[clang::preferred_name(string)]],
+            // so Clang desugars `using string = basic_string<char>` back to
+            // "std::string". Use the written spelling when the alias names itself.
+            if (std::find(visible.begin(), visible.end(), trim(target)) != visible.end()) target = written;
+            for (const auto& key : visible) aliases_[key] = {target, namespaces};
         }
         if (kind == "EnumDecl" && node.contains("name") && !anonymous) {
             read_enum(node, namespaces, source_location, own, owner, accessible);
