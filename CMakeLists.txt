@@ -37,6 +37,12 @@ add_library(rosetta_core
     src/csharp.cpp
     src/java.cpp
     src/common_lisp.cpp
+    src/tcl.cpp
+    src/guile.cpp
+    src/ocaml.cpp
+    src/go.cpp
+    src/apl.cpp
+    src/cobol.cpp
     src/cli.cpp
     src/policy.cpp
     src/compilation_database.cpp
@@ -61,6 +67,12 @@ include(cmake/JavaExample.cmake)
 include(cmake/CSharpExample.cmake)
 include(cmake/FortranExample.cmake)
 include(cmake/CommonLispExample.cmake)
+include(cmake/TclExample.cmake)
+include(cmake/GuileExample.cmake)
+include(cmake/OcamlExample.cmake)
+include(cmake/GoExample.cmake)
+include(cmake/AplExample.cmake)
+include(cmake/CobolExample.cmake)
 
 if(BUILD_TESTING)
     add_executable(rosetta_fortran_capability_tests tests/test_fortran_capabilities.cpp)
@@ -78,6 +90,36 @@ if(BUILD_TESTING)
     target_include_directories(rosetta_java_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     rosetta_warnings(rosetta_java_capability_tests)
     add_test(NAME java_capabilities COMMAND rosetta_java_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_tcl_capability_tests tests/test_tcl_capabilities.cpp)
+    target_link_libraries(rosetta_tcl_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_tcl_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_tcl_capability_tests)
+    add_test(NAME tcl_capabilities COMMAND rosetta_tcl_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_guile_capability_tests tests/test_guile_capabilities.cpp)
+    target_link_libraries(rosetta_guile_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_guile_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_guile_capability_tests)
+    add_test(NAME guile_capabilities COMMAND rosetta_guile_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_ocaml_capability_tests tests/test_ocaml_capabilities.cpp)
+    target_link_libraries(rosetta_ocaml_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_ocaml_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_ocaml_capability_tests)
+    add_test(NAME ocaml_capabilities COMMAND rosetta_ocaml_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_go_capability_tests tests/test_go_capabilities.cpp)
+    target_link_libraries(rosetta_go_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_go_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_go_capability_tests)
+    add_test(NAME go_capabilities COMMAND rosetta_go_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_apl_capability_tests tests/test_apl_capabilities.cpp)
+    target_link_libraries(rosetta_apl_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_apl_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_apl_capability_tests)
+    add_test(NAME apl_capabilities COMMAND rosetta_apl_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_cobol_capability_tests tests/test_cobol_capabilities.cpp)
+    target_link_libraries(rosetta_cobol_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_cobol_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_cobol_capability_tests)
+    add_test(NAME cobol_capabilities COMMAND rosetta_cobol_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
     add_executable(rosetta_common_lisp_capability_tests tests/test_common_lisp_capabilities.cpp)
     target_link_libraries(rosetta_common_lisp_capability_tests PRIVATE rosetta_core)
     target_include_directories(rosetta_common_lisp_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")

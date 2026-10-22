@@ -52,6 +52,12 @@
           csharp = "CSHARP_EXAMPLES";
           fortran = "FORTRAN_EXAMPLES";
           lisp = "COMMON_LISP_EXAMPLES";
+          tcl = "TCL_EXAMPLES";
+          guile = "GUILE_EXAMPLES";
+          ocaml = "OCAML_EXAMPLES";
+          go = "GO_EXAMPLES";
+          gnu-apl = "GNU_APL_EXAMPLES";
+          cobol = "COBOL_EXAMPLES";
         };
         cmakeOptions =
           name:
@@ -61,6 +67,26 @@
             ) backendOptions
             ++ lib.optional (name == "lua") "-DROSETTA_BUILD_MODULE_EXAMPLE=OFF"
           );
+        # GNU APL native functions compile against the interpreter's own
+        # headers: nixpkgs' GNU APL source, configured as nixpkgs builds it.
+        gnuAplHeaders = pkgs.runCommand "gnu-apl-${pkgs.gnuapl.version}-headers" { } ''
+          tar xzf ${pkgs.gnuapl.src}
+          cd apl-${pkgs.gnuapl.version}
+          ./configure > /dev/null
+          mkdir -p $out/src
+          cp config.h $out/
+          cp src/*.hh src/*.icc src/*.def $out/src/
+        '';
+        # nixpkgs marks GNU APL broken on macOS. There, shells use the apl on
+        # PATH (for example Homebrew's) and ROSETTA_GNU_APL_SOURCE_DIR from the
+        # environment: its source tree, configured with ./configure.
+        gnuApl = lib.optionals pkgs.stdenv.isLinux [ pkgs.gnuapl ];
+        gnuAplHook = lib.optionalString pkgs.stdenv.isLinux ''
+          export ROSETTA_GNU_APL_SOURCE_DIR=${gnuAplHeaders}
+        '';
+        # nixpkgs has no prebuilt GnuCOBOL for macOS, so shells there use the
+        # cobc on PATH (for example Homebrew's) instead of building it.
+        gnuCobol = lib.optionals pkgs.stdenv.isLinux [ pkgs.gnucobol ];
         chunkShell =
           {
             name,
@@ -74,6 +100,7 @@
             shellHook =
               lib.optionalString (builtins.elem pkgs.gfortran runtime) fortranHook
               + lib.optionalString (builtins.elem pkgs.sbcl runtime) lispHook
+              + lib.optionalString (name == "gnu-apl") gnuAplHook
               + ''
                 rosetta_root=$PWD
                 until [ -f "$rosetta_root/flake.nix" ] && [ -f "$rosetta_root/CMakeLists.txt" ]; do
@@ -158,6 +185,24 @@
           (load (concatenate 'string (sb-ext:posix-getenv "ROSETTA_README_BUILD") "/lisp_demo.lisp"))
           (load (concatenate 'string (sb-ext:posix-getenv "ROSETTA_README_BUILD") "/lisp_verify.lisp"))
         '';
+        # The GNU APL chunk command: the generated scripts, the chunk, then
+        # )OFF (without it, GNU APL complains at the end of its input).
+        readmeApl = pkgs.writeShellScript "rosetta-readme-apl" ''
+          exec apl --script --noSV --noColor --silent \
+            -f "$ROSETTA_README_BUILD/apl/wslib1/apl_demo.apl" -f "$ROSETTA_README_BUILD/apl/wslib1/apl_verify.apl" \
+            -f "$1" -f ${pkgs.writeText "rosetta-off.apl" ")OFF\n"}
+        '';
+        # The COBOL chunk command: compiles the chunk (free format) against the
+        # generated copybooks and stub archives, then runs it.
+        readmeCobol = pkgs.writeShellScript "rosetta-readme-cobol" ''
+          set -e
+          dir=$(mktemp -d)
+          trap 'rm -rf "$dir"' EXIT
+          cobc -x -free -fstatic-call -I "$ROSETTA_README_BUILD/cobol" -o "$dir/program" "$1" \
+            -L "$ROSETTA_README_BUILD/cobol" -lcobol_demo -lcobol_verify \
+            ${if pkgs.stdenv.isDarwin then "-Q -lc++" else "-Q -lstdc++ -Q -lm"} 2> "$dir/log" || { cat "$dir/log" >&2; exit 1; }
+          "$dir/program"
+        '';
         # Julia loads config/startup.jl from the first depot in JULIA_DEPOT_PATH.
         juliaStartup = pkgs.writeText "startup.jl" ''
           include(joinpath(ENV["ROSETTA_README_BUILD"], "julia_demo.jl"))
@@ -208,15 +253,24 @@
           pkgs.julia-bin
           pkgs.octave
           pkgs.sbcl
+          pkgs.tcl-9_0
+          pkgs.guile
+          pkgs.ocaml
+          pkgs.go
           rWithR6
-        ];
+        ]
+        ++ gnuApl
+        ++ gnuCobol;
       in
       {
         devShells.default = pkgs.mkShell {
           packages = developmentPackages;
-          shellHook = fortranHook + lispHook;
+          shellHook = fortranHook + lispHook + gnuAplHook;
         };
-        devShells.readme-shell = pkgs.mkShell { packages = developmentPackages; shellHook = fortranHook + lispHook; };
+        devShells.readme-shell = pkgs.mkShell {
+          packages = developmentPackages;
+          shellHook = fortranHook + lispHook + gnuAplHook;
+        };
         devShells.readme-lua = chunkShell {
           name = "lua";
           runtime = [ pkgs.lua5_4 ];
@@ -307,6 +361,65 @@
           # sbcl with this prelude.
           setup = ''
             export ROSETTA_README_PRELUDE=${lispPrelude}
+          '';
+        };
+        devShells.readme-tcl = chunkShell {
+          name = "tcl";
+          runtime = [ pkgs.tcl-9_0 ];
+          targets = "rosetta_tcl_demo rosetta_tcl_verify";
+          # The build directory holds pkgIndex.tcl for `package require`.
+          setup = ''
+            export TCLLIBPATH="$ROSETTA_README_BUILD"
+          '';
+        };
+        devShells.readme-guile = chunkShell {
+          name = "guile";
+          runtime = [ pkgs.guile pkgs.pkg-config ];
+          targets = "rosetta_guile_demo rosetta_guile_verify";
+          # Each generated module.scm loads its extension from its own directory.
+          # Guile encodes output ports by locale, so a host without one would
+          # print non-ASCII characters as `?`.
+          setup = ''
+            export GUILE_LOAD_PATH="$ROSETTA_README_BUILD''${GUILE_LOAD_PATH:+:$GUILE_LOAD_PATH}"
+            if [ -z "''${LC_ALL-}''${LC_CTYPE-}''${LANG-}" ]; then export LC_CTYPE=C.UTF-8; fi
+          '';
+        };
+        devShells.readme-ocaml = chunkShell {
+          name = "ocaml";
+          runtime = [ pkgs.ocaml ];
+          targets = "rosetta_ocaml_demo rosetta_ocaml_verify";
+          # The toplevel searches OCAMLTOP_INCLUDE_PATH for `#load`ed
+          # libraries and the DLLs they name.
+          setup = ''
+            export OCAMLTOP_INCLUDE_PATH="$ROSETTA_README_BUILD/ocaml''${OCAMLTOP_INCLUDE_PATH:+:$OCAMLTOP_INCLUDE_PATH}"
+          '';
+        };
+        devShells.readme-go = chunkShell {
+          name = "go";
+          runtime = [ pkgs.go ];
+          targets = "rosetta_go_demo_package rosetta_go_verify_package";
+          # go.work lists the generated packages, so `go build main.go`
+          # imports them without a module of its own.
+          setup = ''
+            export GOWORK="$ROSETTA_README_BUILD/go/go.work" GOTOOLCHAIN=local GOFLAGS=-buildvcs=false
+          '';
+        };
+        devShells.readme-gnu-apl = chunkShell {
+          name = "gnu-apl";
+          runtime = gnuApl;
+          targets = "rosetta_gnu_apl_demo rosetta_gnu_apl_verify rosetta_apl_scripts";
+          # MEP has no APL runner; the chunk's cmd runs this script.
+          setup = ''
+            export ROSETTA_README_APL=${readmeApl}
+          '';
+        };
+        devShells.readme-cobol = chunkShell {
+          name = "cobol";
+          runtime = gnuCobol;
+          targets = "rosetta_cobol_demo rosetta_cobol_verify rosetta_cobol_copybooks";
+          # MEP has no COBOL runner; the chunk's cmd runs this script.
+          setup = ''
+            export ROSETTA_README_COBOL=${readmeCobol}
           '';
         };
         # Used by `just lua-repl`, including when called outside nix develop.

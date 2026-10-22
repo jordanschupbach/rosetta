@@ -48,6 +48,8 @@ struct Function {
     bool is_noexcept = false;
     // Number of trailing parameters whose defaults are visible at the header entry point.
     std::size_t default_arguments = 0;
+    // Declared parameter names, empty where unnamed; parallel to parameters.
+    std::vector<std::string> parameter_names{};
 
     std::string qualified_name() const;
     std::string identity() const;

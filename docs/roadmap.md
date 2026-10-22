@@ -230,6 +230,66 @@ Next gates: enum/container codecs; native values/factories/borrows; callbacks; C
 
 Validation: all five Common Lisp tests passed with SBCL 2.6.8, CFFI and trivial-garbage from nixpkgs and Clang on macOS (arm64), with generated native libraries compiled under warnings-as-errors. Other Lisp implementations and platforms remain unverified.
 
+## Tcl verification
+
+Tcl emits stub-enabled Tcl 9 extensions, reusing the shared model, policies, compiler/dependency tooling and native-only fixtures. `just tcl-test` runs an isolated build with runtime and shared tests; `just tcl-repl` opens tclsh with the examples. This initial slice covers scalar and owned-class APIs.
+
+Evidence: [tcl.cpp](../src/tcl.cpp), [tcl_runtime.hpp](../src/tcl_runtime.hpp), [runtime tests](../tests/test_tcl.tcl), [capability tests](../tests/test_tcl_capabilities.cpp) and [TclExample.cmake](../cmake/TclExample.cmake). Capability tests cover the shared 26 strict/partial unsupported cases, policies/access/defaults, subcommand and option tables, reserved object subcommands, Tcl-cased init names, namespaced command names, deterministic generation and CLI artifacts. Runtime tests reuse `r_demo.hpp` and `r_verification.hpp` and check Tcl integer forms and 64-bit boundaries, booleans, finite/range checks, UTF-8 with NULs and non-BMP characters, errorCodes, `wrong # args`, cget/configure (including all-or-nothing assignment), destruction through close/rename/interpreter deletion, native tasks and exit with a pending worker.
+
+Next gates: Tcl 8.6 conversions; enum/container codecs; native values/factories/borrows; callbacks; TclOO classes; multi-interpreter threading tests.
+
+Validation: all five Tcl tests passed with Tcl 9.0.4 from nixpkgs and Clang on macOS (arm64), with generated extensions compiled under warnings-as-errors. Other platforms remain unverified.
+
+## Guile verification
+
+Guile emits libguile extensions plus a generated Scheme module, reusing the shared model, policies, compiler/dependency tooling and native-only fixtures. `just guile-test` runs an isolated build with runtime and shared tests; `just guile-repl` opens a Guile REPL with the examples. This initial slice covers scalar and owned-class APIs.
+
+Evidence: [guile.cpp](../src/guile.cpp), [guile_runtime.hpp](../src/guile_runtime.hpp), [runtime tests](../tests/test_guile.scm), [capability tests](../tests/test_guile_capabilities.cpp) and [GuileExample.cmake](../cmake/GuileExample.cmake). Capability tests cover the shared 26 strict/partial unsupported cases, policies/access/defaults, SRFI-9 style names, const fields without setters, export collisions, the 10-argument primitive limit, reserved module names, deterministic generation and CLI artifacts (including the module filename check). Runtime tests reuse `r_demo.hpp` and `r_verification.hpp` and check exact/inexact numbers and 64-bit boundaries, booleans, finite/range checks, UTF-8 with NULs and non-BMP characters, `rosetta-error` through `catch`, `guard` and the exception printer, `wrong-number-of-args`, wrong-type and closed objects, close/finalizer destruction, calls from several Guile threads, native tasks and exit with a pending worker.
+
+Next gates: enum/container codecs; native values/factories/borrows; callbacks; GOOPS classes; exceeding the 10-argument limit through rest arguments.
+
+Validation: all five Guile tests passed with Guile 3.0.11 from nixpkgs and Clang on macOS (arm64), with generated extensions compiled under warnings-as-errors, interpreted and auto-compiled. Other platforms remain unverified.
+
+## OCaml verification
+
+OCaml emits C stubs plus a generated module of externals, reusing the shared model, policies, compiler/dependency tooling and native-only fixtures; the frontend now records parameter names for the optional labeled arguments. `just ocaml-test` runs an isolated build with runtime and shared tests, in the bytecode toplevel and as a native program; `just ocaml-repl` opens the toplevel with the examples. This initial slice covers scalar and owned-class APIs.
+
+Evidence: [ocaml.cpp](../src/ocaml.cpp), [ocaml_runtime.hpp](../src/ocaml_runtime.hpp), [runtime tests](../tests/test_ocaml.ml), [capability tests](../tests/test_ocaml_capabilities.cpp) and [OcamlExample.cmake](../cmake/OcamlExample.cmake). Capability tests cover the shared strict/partial unsupported cases, policies/access, optional labeled arguments, scalar representations, namespace and class modules, keyword and capitalization adjustments with their collisions, bytecode stubs for more than five arguments, reserved module names, deterministic generation and CLI artifacts (including the module filename check). Runtime tests reuse `r_demo.hpp` and `r_verification.hpp` and check C++ integer ranges, int64 boundaries and unsigned bit patterns, chars, finite/range checks, byte strings with NULs, labels and label gaps, `Error` matching and its printer, closed objects, close/finalizer destruction, structural comparison and marshalling refusals, calls and finalizers across domains, native tasks and exit with a pending worker.
+
+Next gates: enum/container codecs; native values/factories/borrows; callbacks; an `.mli` and findlib/dune packaging.
+
+Validation: all eight OCaml tests (bytecode and native runtime families, the toplevel REPL script and capabilities) passed with OCaml 5.4.1 and Clang from nixpkgs on macOS (arm64), with generated stubs compiled under warnings-as-errors. Other platforms remain unverified.
+
+## Go verification
+
+Go emits typed C ABI stubs plus a generated cgo package, reusing the shared model, policies, compiler/dependency tooling and native-only fixtures. `just go-test` runs an isolated build with runtime and shared tests, plain and under the race detector, and checks the generated packages with `gofmt` and `go vet`. This initial slice covers scalar and owned-class APIs.
+
+Evidence: [go.cpp](../src/go.cpp), [go_runtime.hpp](../src/go_runtime.hpp), [runtime tests](../tests/test_go.go), [capability tests](../tests/test_go_capabilities.cpp) and [GoExample.cmake](../cmake/GoExample.cmake). Capability tests cover the shared strict/partial unsupported cases, policies/access, variadic defaults and mixed-type defaults, scalar representations, CamelCase names, flattened namespaces and their collisions, renamed parameters, reserved package names, the package preamble, deterministic generation and CLI artifacts. Runtime tests reuse `r_demo.hpp` and `r_verification.hpp` and check every integer boundary, floats including infinities and NaN, byte strings with NULs and invalid UTF-8, variadic defaults and their limit, `*Error` through `errors.As`, closed, nil and zero-value objects, close/cleanup destruction, calls and cleanups across goroutines, native tasks and exit with a pending worker.
+
+Next gates: enum/container codecs; native values/factories/borrows; callbacks and Go interfaces; Windows link flags.
+
+Validation: all eight Go tests (four runtime families, the race-detector run, gofmt, go vet and capabilities) passed with Go 1.26.3 and Clang from nixpkgs on macOS (arm64), with generated stubs compiled under warnings-as-errors. Other platforms remain unverified.
+
+## APL verification
+
+APL emits one C ABI library with two front ends: a Dyalog namespace script calling it through `⎕NA`, and a GNU APL script calling a generated native function that calls the same stubs. It reuses the shared model, policies, compiler/dependency tooling and native-only fixtures. `just apl-test` runs an isolated GNU APL build with runtime and shared tests. This initial slice covers scalar and owned-class APIs.
+
+Evidence: [apl.cpp](../src/apl.cpp), [apl_runtime.hpp](../src/apl_runtime.hpp), [GNU APL tests](../tests/test_gnu_apl.apl), [workspace-clear test](../tests/test_gnu_apl_clear.apl), [Dyalog tests](../tests/test_dyalog.apls), [capability tests](../tests/test_apl_capabilities.cpp) and [AplExample.cmake](../cmake/AplExample.cmake). Capability tests cover the shared strict/partial unsupported cases, policies/access, niladic, monadic and dyadic wrapper forms, Dyalog `⎕NA` declarations, call specs and classes, flattened namespaces and their collisions, library paths, deterministic generation and CLI artifacts. GNU APL runtime tests reuse `r_demo.hpp` and `r_verification.hpp` and check integer boundaries and integral floats, range, type and count errors, UTF-8 strings with NULs, optional arguments, nested and plain string arguments, events and `last_error`, closed, forged, wrongly typed and other-library handles, `)CLEAR` and exit destruction, and native tasks.
+
+Next gates: run the Dyalog front end under Dyalog; enum/array/container codecs; native values/factories/borrows; callbacks; Windows.
+
+Validation: all seven GNU APL tests (five runtime families, workspace clear and capabilities) passed with GNU APL 2.0 (Homebrew) and Clang from nixpkgs on macOS (arm64), with generated code compiled under warnings-as-errors; the GNU APL bridge also compiles against GNU APL 1.9's headers (nixpkgs). The Dyalog front end is generated and checked by the capability tests, and its C ABI was exercised directly, but it has not run under Dyalog. Linux remains unverified.
+
+## COBOL verification
+
+COBOL emits a copybook of parameter records plus C++ stubs that GnuCOBOL programs `CALL` with `-fstatic-call`, reusing the shared model, policies, compiler/dependency tooling and native-only fixtures. `just cobol-test` runs an isolated build with runtime and shared tests. This initial slice covers scalar and owned-class APIs.
+
+Evidence: [cobol.cpp](../src/cobol.cpp), [cobol_runtime.hpp](../src/cobol_runtime.hpp), [runtime tests](../tests/test_cobol.cob), [fixed-format test](../tests/test_cobol_fixed.cob), [capability tests](../tests/test_cobol_capabilities.cpp) and [CobolExample.cmake](../cmake/CobolExample.cmake). Capability tests cover the shared strict/partial unsupported cases, policies/access, record layouts and field usages, string fields and their capacity, `-GIVEN` defaults, renamed parameters, camelCase words, the status record, fixed-format columns, case-insensitive and CALL-name collisions, word lengths, deterministic generation and CLI artifacts. Runtime tests reuse `r_demo.hpp` and `r_verification.hpp` and check every integer boundary, floats, booleans, trimmed and exact-length strings with NULs and UTF-8, overlong results, defaults and their limit, status kinds, messages, `RETURN-CODE` and `OMITTED`, closed, forged and wrongly typed handles, native tasks and exit with a pending worker.
+
+Next gates: COBOL tables for arrays/containers; enum codecs; native values/factories/borrows; callbacks; other COBOL compilers; Windows.
+
+Validation: all six COBOL runtime programs (five free-format families and the fixed-format build) passed with GnuCOBOL 3.2 (Homebrew) and Clang from nixpkgs on macOS (arm64), with generated stubs compiled under warnings-as-errors. Other platforms remain unverified.
+
 ## Milestones
 
 | Phase | Work | Completion criteria |
@@ -238,7 +298,7 @@ Validation: all five Common Lisp tests passed with SBCL 2.6.8, CFFI and trivial-
 | 1: reliable declaration foundation | Structured type graph, stable IDs and source locations, robust Clang adapter, compiler matrix, compilation databases, explicit selection/rename/ignore config, versioned manifests | Real dependency-heavy headers parse without leaking dependency declarations; every selected declaration has an emitted/adapted/rejected outcome; deterministic output |
 | 2: useful procedural APIs | Alias resolution in every position, enums, overload dispatch, defaults, constants, namespace tables, strings, buffer/length adapters and references with direction policies | Bind a real procedural library; boundary and ambiguity tests; no silent lossy integer conversion or lifetime assumptions |
 | 3: object model | Owned/borrowed userdata, constructors/destructors, methods, fields/properties, constness, copy/move, smart pointers, class identity | Bind a small class library; GC/explicit-close/destructor counters and sanitizers show no leaks or dangling borrowers |
-| 4: reusable ABI and additional languages (R, Python, Ruby, Octave, Julia, Java and Common Lisp started) | R6/S3/S4, initial CPython, MRI Ruby, Octave, Julia, Java and Common Lisp backends reuse extraction and policies; shared C shim, error protocol, ABI/version manifest and broader coverage remain planned | Same fixture libraries bind across runtimes; shared semantic extraction and ownership policies; no Lua-specific model nodes |
+| 4: reusable ABI and additional languages (R, Python, Ruby, Octave, Julia, Java, Common Lisp, Tcl, Guile, OCaml, Go, APL and COBOL started) | R6/S3/S4, initial CPython, MRI Ruby, Octave, Julia, Java, Common Lisp, Tcl, Guile, OCaml, Go, APL and COBOL backends reuse extraction and policies; shared C shim, error protocol, ABI/version manifest and broader coverage remain planned | Same fixture libraries bind across runtimes; shared semantic extraction and ownership policies; no Lua-specific model nodes |
 | 5: advanced C++ | Inheritance, operators, templates and standard containers, callbacks, virtual dispatch, policies for concurrency | Feature fixtures execute in both languages; ambiguous overloads and invalid policies produce precise diagnostics |
 | 6: broad language/platform support | C#/PInvoke, Java/JNI, JS native or Wasm, Swift/C, Go/cgo and others; packaging and platform matrix | Each backend has published capability coverage, native loading tests, documented runtime constraints, and distributable artifacts |
 

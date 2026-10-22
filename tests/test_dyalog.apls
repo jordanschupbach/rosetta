@@ -1,0 +1,131 @@
+#!/usr/bin/env dyalogscript
+⍝ Runtime tests for the generated Dyalog bindings. CTest runs one family,
+⍝ named by ROSETTA_APL_FAMILY, with ROSETTA_DYALOG_DIR set to build/apl/dyalog.
+⎕IO ⎕ML←1 1
+∇ r←Env name
+  r←2⎕NQ'.' 'GetEnvironment'name
+∇
+Dir←Env'ROSETTA_DYALOG_DIR'
+{}⎕FIX¨('file://',Dir,'/')∘,¨'apl_demo.apln' 'apl_verify.apln' 'apl_names.apln'
+Failures←0
+
+∇ Check(label got want)
+  →(got≡want)/0
+  Failures+←1
+  ⎕←'FAIL ',label,': got ',(⍕got),', want ',⍕want
+∇
+
+⍝ Executes EXPR, which must signal KIND from MODULE with FRAGMENT in its message.
+∇ Fails(label module expr kind fragment);e;ok
+  :Trap 501 502 503 504 505 506
+      ⍎expr
+      Failures+←1
+      ⎕←'FAIL ',label,': no error'
+      :Return
+  :EndTrap
+  e←(⍎module).last_error
+  ok←(⎕DMX.EN=500+(⍎module).⍙Kinds⍳⊂kind)∧(kind≡⊃e)∧(∨/fragment⍷2⊃e)∧∨/fragment⍷⎕DMX.Message
+  →ok/0
+  Failures+←1
+  ⎕←'FAIL ',label,': got ',(⍕⎕DMX.EN),' ',(⊃e),' "',(2⊃e),'"'
+∇
+
+∇ Scalars;text
+  Check'schar'(apl_verify.echo_schar ¯128)¯128
+  Check'uchar'(apl_verify.echo_uchar 255)255
+  Check'int'(apl_verify.echo_int ¯2147483648)¯2147483648
+  Check'uint'(apl_verify.echo_uint 4294967295)4294967295
+  Check'too large'(apl_demo.too_large)9007199254740993
+  Fails'int range' 'apl_verify' 'apl_verify.echo_int 2147483648' 'range' 'integer outside C++ type range'
+  Fails'uint range' 'apl_verify' 'apl_verify.echo_uint ¯1' 'range' 'integer outside'
+  Fails'fraction' 'apl_verify' 'apl_verify.echo_int 1.5' 'argument' 'expected an integer'
+  Fails'text for int' 'apl_verify' 'apl_verify.echo_int ''a''' 'argument' 'expected an integer'
+  Check'add'(apl_demo.add 20 22)42
+  Check'float'(apl_verify.echo_float 1.25)1.25
+  Check'half'(apl_demo.half 3)1.5
+  Fails'nonfinite' 'apl_verify' 'apl_verify.nonfinite_result' 'range' 'non-finite floating-point result'
+  Check'bool'(apl_verify.echo_bool 1)1
+  Fails'bool' 'apl_verify' 'apl_verify.echo_bool 2' 'argument' 'expected a boolean (0 or 1)'
+  Check'char'(apl_verify.echo_char'a')'a'
+  Fails'char range' 'apl_verify' 'apl_verify.echo_char ⎕UCS 256' 'range' 'character outside the C++ char range'
+  :For text :In '' 'world' '世界😀'('a',(⎕UCS 0),'b')(40000⍴'long')
+      Check'string'(apl_verify.echo_string text)text
+  :EndFor
+  Check'embedded nul'(apl_verify.embedded_nul)('a',(⎕UCS 0),'b')
+  Check'greet'(apl_demo.greet'APL')'Hello, APL!'
+  Check'defaulted'(apl_verify.defaulted ⍬)42
+  Check'defaulted'(apl_verify.defaulted 12)12
+  apl_verify.do_nothing
+  Fails'fail' 'apl_demo' 'apl_demo.fail' 'native' 'apl_demo: r_demo::fail: native failure (native)'
+  Fails'unknown' 'apl_verify' 'apl_verify.unknown_error' 'native' 'unknown C++ exception'
+  Fails'allocation' 'apl_verify' 'apl_verify.allocation_error' 'allocation' 'allocation'
+∇
+
+∇ Names;p
+  Check'type'(apl_names.type ⍬)42
+  Check'underscore'(apl_names._private_name)7
+  Check'labels'(apl_names.labels 3 4)34
+  Fails'labels' 'apl_names' 'apl_names.labels 1 2 3' 'argument' 'expected 0 to 2 arguments'
+  Check'join'(apl_names.join'a')'a-!'
+  Check'join'(apl_names.join(,'a')(,'+'))'a+!'
+  Check'repeat'(apl_names.repeat 3 'ab')'ababab'
+  Check'mixed'(apl_names.mixed 1 2.5)5.5
+  Check'shout'(apl_names.shout'a')'A'
+  Check'depth'(apl_names.depth)1
+  p←⎕NEW apl_names.point(1 2)
+  Check'sum'(p.sum ⍬)3
+  Check'sum'(p.sum 2)6
+  Check'origin'(apl_names.point.origin)0
+  p.x←5
+  Check'x'(p.x)5
+  p.tag←'z'
+  Check'tag'(p.tag)'z'
+  Check'weight'(p.weight)1.5
+  p.close
+  Fails'closed point' 'apl_names' 'p.sum ⍬' 'closed' 'native object is closed'
+  p←⎕NEW apl_names.point
+  Check'default point'(p.sum ⍬)0
+∇
+
+∇ Objects;c
+  Check'none live'(apl_demo.Counter.live)0
+  Fails'negative' 'apl_demo' '⎕NEW apl_demo.Counter ¯1' 'native' 'negative initial'
+  c←⎕NEW apl_demo.Counter 20
+  Check'add'(c.add 22)42
+  Check'value'(c.value)42
+  Check'initial'(c.initial)20
+  c.count←7
+  Check'count'(c.count)7
+  c.label←'世界😀',⎕UCS 0
+  Check'label'(c.label)('世界😀',⎕UCS 0)
+  c.close
+  Check'closed'(apl_demo.Counter.live)0
+  Fails'value closed' 'apl_demo' 'c.value' 'closed' 'native object is closed'
+  ⍝ An object is destroyed when its last reference goes.
+  {}{c←⎕NEW apl_demo.Counter 1 ⋄ 0}⍬
+  Check'released'(apl_demo.Counter.live)0
+∇
+
+∇ Features;s;t
+  Check'constrained'(apl_verify.constrained_sum 20 22)42
+  Fails'overflow' 'apl_verify' 'apl_verify.constrained_sum 2147483647 1' 'range' 'overflow'
+  s←⎕NEW apl_verify.Series
+  Check'scaled'(s.scaled_sum 2)82
+  Check'text'(s.text)'[20, 21]'
+  s.set 1 22
+  Check'get'(s.get 1)22
+  Fails'get range' 'apl_verify' 's.get 2' 'index' 'out of range'
+  t←⎕NEW apl_verify.AsyncTask(21 0 0)
+  Check'wait'(t.wait 2000)1
+  Check'result'(t.result)42
+  t.close
+  Check'workers'(apl_verify.AsyncTask.workers)0
+∇
+
+∇ Run family
+  ⍎(1 ⎕C 1↑family),1↓family
+  →(Failures≠0)/0
+  ⎕←'ROSETTA PASS ',family
+∇
+Run Env'ROSETTA_APL_FAMILY'
+⎕OFF

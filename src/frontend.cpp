@@ -398,6 +398,7 @@ private:
             const auto& type = child.at("type");
             const auto spelling = type.at("qualType").get<std::string>();
             result.parameters.push_back({spelling, type.value("desugaredQualType", spelling)});
+            result.parameter_names.push_back(child.value("name", ""));
         }
         const auto function = detail::function_spelling(signature);
         if (!function || (function->suffix != "" && function->suffix != "const" &&

@@ -1,8 +1,8 @@
 > Rosetta
 
-Rosetta generates source code that connects C\+\+ libraries to other languages through their native extension or FFI APIs. Lua uses a Lua 5.4 C API module loaded with `require`; R uses a native `.Call` bridge with R6, S3 or S4 interfaces; Python and Ruby use native extensions with owned classes; Octave uses native `.oct` modules with owned objects; Julia uses a generated `ccall` module and C ABI shared library; Java uses compiled Java classes and JNI libraries; C# uses generated .NET APIs and C ABI libraries; Fortran uses generated `ISO_C_BINDING` modules and C ABI libraries; Common Lisp uses a generated CFFI package and C ABI shared library.
+Rosetta generates source code that connects C\+\+ libraries to other languages through their native extension or FFI APIs. Lua uses a Lua 5.4 C API module loaded with `require`; R uses a native `.Call` bridge with R6, S3 or S4 interfaces; Python and Ruby use native extensions with owned classes; Octave uses native `.oct` modules with owned objects; Julia uses a generated `ccall` module and C ABI shared library; Java uses compiled Java classes and JNI libraries; C# uses generated .NET APIs and C ABI libraries; Fortran uses generated `ISO_C_BINDING` modules and C ABI libraries; Common Lisp uses a generated CFFI package and C ABI shared library; Tcl uses Tcl 9 stub-enabled extensions with object commands; Guile Scheme uses libguile extensions loaded by a generated module; OCaml uses C stubs declared as externals in a generated module, for both bytecode and native code; Go uses cgo packages that call C\+\+ stubs in a static archive; APL uses a C ABI library that Dyalog calls through `⎕NA` and GNU APL through a generated native function; COBOL uses generated copybooks of parameter records passed to C\+\+ stubs.
 
-Rosetta itself is implemented in C\+\+17, built with CMake, and tested with C\+\+, Lua, R, Python, Ruby, Octave, Julia, Java, C#, Fortran and Common Lisp. This is a working prototype. It parses real C\+\+ with Clang, keeps declarations in a shared model, and emits native bindings. Its long-term goal is coverage of every C\+\+ feature through a native mapping, an explicit adapter, a concrete instantiation, or an opaque handle. An unrestricted C\+\+ program cannot automatically have an equivalent interface in every language; ownership, specialization, and runtime policies sometimes need user input.
+Rosetta itself is implemented in C\+\+17, built with CMake, and tested with C\+\+, Lua, R, Python, Ruby, Octave, Julia, Java, C#, Fortran, Common Lisp, Tcl, Guile Scheme, OCaml, Go, GNU APL and COBOL. This is a working prototype. It parses real C\+\+ with Clang, keeps declarations in a shared model, and emits native bindings. Its long-term goal is coverage of every C\+\+ feature through a native mapping, an explicit adapter, a concrete instantiation, or an opaque handle. An unrestricted C\+\+ program cannot automatically have an equivalent interface in every language; ownership, specialization, and runtime policies sometimes need user input.
 
 The Lua feature-family demo is complete through generated bindings and explicit native/Lua adapters. See the [feature coverage plan|docs/lua-feature-plan.md] for each contract and the [completion audit|docs/lua-coverage-audit.md] for implementation, test evidence and remaining product work.
 
@@ -12,11 +12,11 @@ Run any chunk in MEP with `C-c C-c`; only Nix (with flakes) needs to be
 installed on the host. Each chunk names one of this repository's flake shells
 with `nix-shell=".#readme-LANGUAGE"` (`readme-lua`, `readme-r`,
 `readme-python`, `readme-ruby`, `readme-octave`, `readme-julia`,
-`readme-java`, `readme-csharp`, `readme-fortran`, `readme-lisp` or `readme-shell`), which MEP
+`readme-java`, `readme-csharp`, `readme-fortran`, `readme-lisp`, `readme-tcl`, `readme-guile`, `readme-ocaml`, `readme-go`, `readme-gnu-apl`, `readme-cobol` or `readme-shell`), which MEP
 enters with `nix develop` before running the chunk with the language's usual
 command (`lua`, `Rscript`, `python3`, `ruby`, `octave-cli`, `julia`,
-`javac`/`java`, `dotnet run` or `gfortran`; MEP has no Common Lisp runner, so
-Lisp chunks set `cmd` to an `sbcl` command line). Entering a language shell builds
+`javac`/`java`, `dotnet run`, `gfortran`, `tclsh`, `guile`, `ocaml` or `go build`; MEP has no Common Lisp, APL or COBOL runner, so
+Lisp chunks set `cmd` to an `sbcl` command line and GNU APL and COBOL chunks to their shells' commands). Entering a language shell builds
 its modules in `build/readme/LANGUAGE`, then points the interpreter at them
 through its own startup hook (`LUA_INIT`, `R_PROFILE_USER`, a
 `sitecustomize` module, `RUBYOPT`, `OCTAVE_SITE_INITFILE` or Julia's
@@ -799,6 +799,408 @@ set_target_properties(library PROPERTIES PREFIX "")
 ```
 
 Enable `ROSETTA_BUILD_COMMON_LISP_EXAMPLES` for the repository modules. Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Enums, containers, overloads, callbacks, class-valued/borrowed values and inheritance remain open. The interface is written against portable CFFI, but it has only been tested with SBCL 2.6.8 on macOS (arm64); other implementations and platforms remain unverified.
+
+>> Tcl
+
+Select Tcl with `--language tcl`. Generation writes the C\+\+ source of a Tcl extension; it does not need Tcl. Compile it against Tcl 9.0\+ headers with `USE_TCL_STUBS` and link the stub library, so the extension loads into any Tcl 9 interpreter:
+
+```{sh, nix-shell=".#readme-shell"}
+just run examples/r_demo.hpp --language tcl --module tcl_demo \
+  --policy examples/r_demo.policy.json -o build/tcl_demo.cpp
+extension=$(echo 'puts [info sharedlibextension]' | tclsh9.0)
+clang++ -std=c++17 -shared -fPIC -DUSE_TCL_STUBS $(pkg-config --cflags tcl) build/tcl_demo.cpp \
+  -L"$(pkg-config --variable=libdir tcl)" -ltclstub -o build/tcl_demo$extension
+echo 'load build/tcl_demo[info sharedlibextension]; puts [tcl_demo::r_demo__add 20 22]' | tclsh9.0
+```
+
+`load` finds the init function from the file name (`tcl_demo` → `Tcl_demo_Init`), and the extension provides package `tcl_demo` version 1.0. The repository build writes a `pkgIndex.tcl` beside its extensions, and the `readme-tcl` shell puts that directory on `TCLLIBPATH`, so chunks use `package require`:
+
+```{tcl, nix-shell=".#readme-tcl"}
+package require tcl_demo
+package require tcl_verify
+puts [tcl_demo::r_demo__add 20 22]             ;# 42
+set c [tcl_demo::r_demo__Counter new 20]
+puts [$c add 22]                               ;# 42
+$c configure -count 7 -label "Tcl 😀"
+puts [$c value]                                ;# 7
+puts [$c cget -label]                          ;# Tcl 😀
+puts [$c configure]                            ;# -count 7 -initial 20 -label {Tcl 😀}
+$c close                                       ;# deletes the command and the native object
+set s [tcl_verify::r_verify__Series new]
+puts [$s scaled_sum 2]                         ;# 82
+$s close
+try {
+    tcl_demo::r_demo__fail
+} trap {ROSETTA native} {message} {
+    puts "caught: $message"                    ;# caught: native failure
+}
+```
+
+Each module becomes a namespace (`::tcl_demo`) whose commands are exported for `namespace import`. C\+\+ namespaces flatten to double underscores. Names such as `set` or `puts` stay inside the module namespace and never replace Tcl's own commands. A selected class becomes a class command with subcommand `new` and its static methods. Each object is its own command, `::tcl_demo::r_demo__Counter#1`, Tk style: methods are subcommands, `cget -field` reads a field, and `configure` sets `-field value` pairs or returns all fields as a dict. `configure` converts every value before assigning any, and const fields are readonly. Unknown subcommands and options get Tcl's usual "bad option" errors, and wrong argument counts raise `wrong # args` with errorCode `{TCL WRONGARGS}`. Public trailing defaults are honored. Void returns an empty result. Methods named `cget`, `configure` or `close` are rejected.
+
+Integer arguments take Tcl integers (decimal, `0x` and the other Tcl forms, digit separators) through the full signed and unsigned 64-bit ranges, followed by C\+\+ range checks. Doubles are not accepted for integers. Bool takes any Tcl boolean (`1`, `true`, `yes`, `on` and so on) and returns `1` or `0`. Float and double arguments take any Tcl number, and must be finite and within the C\+\+ type's range. `std::string` converts through UTF-8, preserving embedded NULs and characters beyond the BMP. String results must be valid UTF-8; other bytes raise a conversion error.
+
+The object command owns its native object. `close`, `rename $obj ""` and deleting the interpreter all destroy it, after which the command name is invalid; closing twice is an `invalid command name` error, as for any deleted command. Tcl interpreters are single-threaded: commands run on their interpreter's thread, and native workers never call into Tcl.
+
+Native failures raise Tcl errors with errorCode `{ROSETTA kind}`, where kind is `allocation`, `range`, `index`, `argument` or `native`; type mismatches use `conversion`. Use `try … trap {ROSETTA index} …` to handle a kind. C\+\+ exceptions never cross into Tcl.
+
+Run `just tcl-test` for an isolated `build/tcl-tests` build, or `just tcl-repl` for a prompt with both packages loaded. CMake consumers can call:
+
+```{cmake, eval=false}
+rosetta_generate_tcl(HEADER api.hpp MODULE library
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/library.cpp" POLICY api.policy.json)
+add_library(library MODULE "${CMAKE_CURRENT_BINARY_DIR}/library.cpp")
+target_compile_definitions(library PRIVATE USE_TCL_STUBS)
+target_include_directories(library PRIVATE "${TCL_INCLUDE_DIR}")
+target_link_libraries(library PRIVATE "${TCL_STUB_LIBRARY}")
+set_target_properties(library PROPERTIES PREFIX "")
+```
+
+Enable `ROSETTA_BUILD_TCL_EXAMPLES` for the repository modules; [TclExample.cmake|cmake/TclExample.cmake] locates Tcl through `tclsh9.0`. Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Enums, containers, overloads, callbacks, class-valued/borrowed values, inheritance, TclOO classes and Tcl 8.6 remain open. Tcl 8.6 wraps out-of-range 64-bit integers and cannot represent characters beyond the BMP, so it needs different conversions. Tested with Tcl 9.0.4 on macOS (arm64); other platforms remain unverified.
+
+>> Guile Scheme
+
+Select Guile with `--language guile`. Generation writes two files: the C\+\+ source of a libguile extension, and a module `MODULE.scm` (beside the output, or `--guile-output`) that loads it. Generation does not need Guile. Compile the extension against Guile 3.0 and keep it beside the module:
+
+```{sh, nix-shell=".#readme-shell"}
+just run examples/r_demo.hpp --language guile --module guile_demo \
+  --policy examples/r_demo.policy.json -o build/guile_demo.cpp
+clang++ -std=c++17 -shared -fPIC build/guile_demo.cpp $(pkg-config --cflags --libs guile-3.0) -o build/guile_demo.so
+GUILE_LOAD_PATH=build guile --no-auto-compile -c '(use-modules (guile_demo)) (display (r_demo__add 20 22)) (newline)'
+```
+
+`(use-modules (guile_demo))` finds `guile_demo.scm` on `GUILE_LOAD_PATH`, which loads `guile_demo.so` (or `.dylib`/`.dll`) from its own directory, falling back to Guile's extension search path. The `readme-guile` shell puts the repository build on `GUILE_LOAD_PATH`:
+
+```{guile, nix-shell=".#readme-guile"}
+(use-modules (guile_demo) (guile_verify))
+(display (r_demo__add 20 22)) (newline)                ; 42
+(define c (make-r_demo__Counter 20))
+(display (r_demo__Counter-add c 22)) (newline)         ; 42
+(set-r_demo__Counter-count! c 7)
+(set-r_demo__Counter-label! c "Guile 😀")
+(display (r_demo__Counter-value c)) (newline)          ; 7
+(display (r_demo__Counter-label c)) (newline)          ; Guile 😀
+(display (r_demo__Counter? c)) (newline)               ; #t
+(r_demo__Counter-close! c)                             ; destroys the native object now
+(define s (make-r_verify__Series))
+(display (r_verify__Series-scaled_sum s 2)) (newline)  ; 82
+(r_verify__Series-close! s)
+(catch 'rosetta-error r_demo__fail
+  (lambda (key subr message irritants data)
+    (format #t "caught ~a: ~a\n" (car data) message)))  ; caught native: native failure
+```
+
+Functions keep their C\+\+ names, with namespaces flattened to double underscores. A selected class `K` gets SRFI-9 style names: constructor `make-K`, predicate `K?`, methods and static methods `K-method`, field getters `K-field`, setters `set-K-field!` (none for const fields), and `K-close!`. The names the backend adds use `-`, `?` or `!`, which C\+\+ names cannot contain, so they never collide with a function. Names such as `list` or `display` are exported like any other; import them with `#:prefix` or `#:select` to keep Guile's own bindings. Public trailing defaults become optional arguments, and Guile checks argument counts itself (`wrong-number-of-args`). Void returns the unspecified value. Guile primitives take at most 10 arguments, including the object.
+
+Integer arguments take exact integers through the full signed and unsigned 64-bit ranges, followed by C\+\+ range checks; inexact numbers such as `42.0` are rejected. Bool takes only `#t` or `#f`. Float and double arguments take any real number, exact or inexact, which must be finite and within the C\+\+ type's range. `std::string` converts through UTF-8, preserving embedded NULs and characters beyond the BMP. String results must be valid UTF-8; other bytes raise a conversion error.
+
+Each object is a foreign object owning its native value. `K-close!` destroys it at once, and closing twice is harmless; later calls raise `native object is closed`. Otherwise Guile's finalizer thread destroys it after it becomes unreachable, and objects still alive at exit are destroyed then. Native calls, closes and finalizers are serialized per module, so Guile threads may share objects; native workers never call into Guile.
+
+Native failures raise `rosetta-error` with the standard error arguments `(subr message irritants (kind))`, where kind is `allocation`, `range`, `index`, `argument` or `native`; type mismatches use `conversion`. Handle them with `catch 'rosetta-error`, or with `guard` and `exception-kind`/`exception-message` from `(ice-9 exceptions)`. C\+\+ exceptions never cross into Guile: the extension converts arguments with non-raising checks and raises only after its C\+\+ objects are destroyed.
+
+Run `just guile-test` for an isolated `build/guile-tests` build, or `just guile-repl` for a REPL with both modules loaded. CMake consumers can call:
+
+```{cmake, eval=false}
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GUILE REQUIRED IMPORTED_TARGET guile-3.0)
+rosetta_generate_guile(HEADER api.hpp MODULE library
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/library.cpp"
+  GUILE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/library.scm" POLICY api.policy.json)
+add_library(library MODULE "${CMAKE_CURRENT_BINARY_DIR}/library.cpp")
+target_link_libraries(library PRIVATE PkgConfig::GUILE)
+set_target_properties(library PROPERTIES PREFIX "")
+```
+
+Enable `ROSETTA_BUILD_GUILE_EXAMPLES` for the repository modules. Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Enums, containers, overloads, callbacks, class-valued/borrowed values, inheritance and GOOPS classes remain open. Tested with Guile 3.0.11 on macOS (arm64); other platforms remain unverified.
+
+>> OCaml
+
+Select OCaml with `--language ocaml`. Generation writes the C\+\+ stubs and a module `MODULE.ml` (beside the output, or `--ocaml-output`) declaring them as externals. Generation does not need OCaml. Build the stubs as `dllMODULE_stubs.so` for bytecode and `libMODULE_stubs.a` for native code, then compile the module into a `.cma` and a `.cmxa` that name them:
+
+```{sh, nix-shell=".#readme-shell"}
+just run examples/r_demo.hpp --language ocaml --module ocaml_demo \
+  --policy examples/r_demo.policy.json -o build/ocaml/ocaml_demo.cpp
+cd build/ocaml
+clang++ -std=c++17 -fPIC -c ocaml_demo.cpp -I "$(ocamlc -where)" -o ocaml_demo_stubs.o
+clang++ -shared -undefined dynamic_lookup ocaml_demo_stubs.o -o dllocaml_demo_stubs.so  # Linux: omit -undefined dynamic_lookup
+ar rcs libocaml_demo_stubs.a ocaml_demo_stubs.o
+ocamlc -c ocaml_demo.ml && ocamlc -a -o ocaml_demo.cma ocaml_demo.cmo -dllib -locaml_demo_stubs
+ocamlopt -c ocaml_demo.ml && ocamlopt -a -o ocaml_demo.cmxa ocaml_demo.cmx -cclib -locaml_demo_stubs -cclib -lc++  # Linux: -lstdc++
+echo 'print_int (Ocaml_demo.R_demo.add 20 22); print_newline ()' > main.ml
+ocaml -I . ocaml_demo.cma main.ml                                    # bytecode toplevel
+ocamlopt -I . ocaml_demo.cmxa main.ml -o main && ./main               # native
+```
+
+MEP runs OCaml chunks as toplevel scripts. The `readme-ocaml` shell puts the repository build on `OCAMLTOP_INCLUDE_PATH`, so a chunk loads the libraries with `#load`:
+
+```{ocaml, nix-shell=".#readme-ocaml"}
+#load "ocaml_demo.cma";;
+#load "ocaml_verify.cma";;
+open Ocaml_demo
+open Ocaml_verify
+
+let () =
+  Printf.printf "%d\n" (R_demo.add 20 22);                        (* 42 *)
+  let c = R_demo.Counter.create 20 in
+  Printf.printf "%d\n" (R_demo.Counter.add c 22);                 (* 42 *)
+  R_demo.Counter.set_count c 7;
+  R_demo.Counter.set_label c "OCaml 😀";
+  Printf.printf "%d %s\n" (R_demo.Counter.value c) (R_demo.Counter.label c);  (* 7 OCaml 😀 *)
+  R_demo.Counter.close c;                                         (* destroys the native object now *)
+  let s = R_verify.Series.create () in                            (* C++ defaults: first = 20, count = 2 *)
+  Printf.printf "%d %d\n" (R_verify.Series.scaled_sum s 2) (R_verify.Series.get ~index:1 s);  (* 82 21 *)
+  R_verify.Series.close s;
+  Printf.printf "%Ld\n" (R_demo.too_large ());                     (* 9007199254740993 *)
+  match R_demo.fail () with
+  | () -> ()
+  | exception Ocaml_demo.Error (kind, message) ->
+      Printf.printf "caught %s: %s\n" (Ocaml_demo.string_of_error_kind kind) message  (* caught native: native failure *)
+```
+
+Namespaces become modules (`r_demo` is `R_demo`), and a selected class `K` becomes a module `K` with an abstract type `t`: `create` for the constructor, `close`, methods taking the object first, static methods without it, field getters, and `set_` setters (none for const fields). Value names start with a lowercase letter, and OCaml keywords take a trailing underscore (`type_`). Names that collide after these changes, including a method named `close` or `create`, fail generation. Public trailing defaults become optional labeled arguments named after the C\+\+ parameters (`argN` when unnamed), placed first, so applying the positional arguments omits them; a function without positional arguments takes `()`. Because C\+\+ defaults can only be omitted from the end, giving `~count` without `~first` raises an `Argument` error. Functions with more than five arguments get the separate bytecode stub OCaml requires.
+
+Types map to `int` (`char` aside, integers up to 32 bits), `int64` (`long`, `long long` and their unsigned forms), `float`, `bool`, `char` and `string`. Integer arguments are range-checked against the C\+\+ type. Unsigned 64-bit values keep their bits in `int64`, as Stdlib's `Int64.unsigned_*` functions expect, so `-1L` is the largest value. Float arguments must be finite and within the C\+\+ type's range, and non-finite results raise. Strings are bytes in both directions, preserving NULs and any encoding.
+
+Each library defines `exception Error of error_kind * string`, with kinds `Allocation`, `Range`, `Index`, `Argument`, `Native` and `Closed`, and a printer showing `Ocaml_demo.Error(Native, "native failure")`. C\+\+ exceptions never cross into OCaml: stubs catch them and raise only after their C\+\+ objects are destroyed.
+
+Objects are custom blocks owning their native value. `close` destroys it at once, and closing twice is harmless; later calls raise `Closed`. Otherwise the garbage collector's finalizer destroys it after it becomes unreachable, and objects still alive at exit are destroyed then. Objects cannot be compared structurally, hashed or marshalled (`compare` raises `Invalid_argument`); use `==`. Native calls run with the OCaml runtime released, so other domains and threads keep running, and are serialized per library, so domains may share objects; native workers never call into OCaml.
+
+Run `just ocaml-test` for an isolated `build/ocaml-tests` build, which runs the tests in the toplevel and as a native program, or `just ocaml-repl` for a toplevel with both libraries loaded. CMake consumers can call:
+
+```{cmake, eval=false}
+rosetta_generate_ocaml(HEADER api.hpp MODULE library
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/library.cpp"
+  OCAML_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/library.ml" POLICY api.policy.json)
+add_library(library_stubs STATIC "${CMAKE_CURRENT_BINARY_DIR}/library.cpp")
+target_include_directories(library_stubs PRIVATE "${OCAML_STDLIB}")  # from `ocamlc -where`
+set_target_properties(library_stubs PROPERTIES POSITION_INDEPENDENT_CODE ON)
+```
+
+[OcamlExample.cmake|cmake/OcamlExample.cmake] shows the full build: the bytecode DLL, the static archive, and the `.cma`/`.cmxa` libraries. Enable `ROSETTA_BUILD_OCAML_EXAMPLES` for the repository libraries. Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Enums, containers, overloads, callbacks, class-valued/borrowed values, inheritance, an `.mli` file, dune and findlib packaging remain open. Tested with OCaml 5.4.1 on macOS (arm64); other platforms remain unverified.
+
+>> Go
+
+Select Go with `--language go`. Generation writes the C\+\+ stubs and a cgo package file `MODULE.go` (beside the output, or `--go-output`) for a package named after the module. Generation does not need Go. Compile the stubs into `libMODULE_stubs.a` in the package directory, which the package links through `${SRCDIR}`:
+
+```{sh, nix-shell=".#readme-shell"}
+just run examples/r_demo.hpp --language go --module go_demo --policy examples/r_demo.policy.json \
+  -o build/go/go_demo.cpp --go-output build/go/go_demo/go_demo.go
+cd build/go
+clang++ -std=c++17 -fPIC -c go_demo.cpp -o go_demo.o && ar rcs go_demo/libgo_demo_stubs.a go_demo.o
+printf 'module go_demo\n\ngo 1.24\n' > go_demo/go.mod
+printf 'go 1.24\n\nuse ./go_demo\n' > go.work
+mkdir -p hello
+printf 'package main\n\nimport (\n\t"fmt"\n\t"go_demo"\n)\n\nfunc main() { fmt.Println(go_demo.Add(20, 22)) }\n' > hello/main.go
+GOWORK=$PWD/go.work go run ./hello/main.go   # 42 <nil>
+```
+
+MEP builds Go chunks with `go build`. The `readme-go` shell sets `GOWORK` to the repository build's `go.work`, which lists the generated packages, so a chunk imports them directly:
+
+```{go, nix-shell=".#readme-go"}
+package main
+
+import (
+	"errors"
+	"fmt"
+
+	"go_demo"
+	"go_verify"
+)
+
+func main() {
+	sum, err := go_demo.Add(20, 22)
+	fmt.Println(sum, err) // 42 <nil>
+	c, _ := go_demo.NewCounter(20)
+	defer c.Close()        // destroys the native object; closing twice is harmless
+	fmt.Println(c.Add(22)) // 42 <nil>
+	c.SetCount(7)
+	c.SetLabel("Go 😀")
+	value, _ := c.Value()
+	label, _ := c.Label()
+	fmt.Println(value, label)     // 7 Go 😀
+	s, _ := go_verify.NewSeries() // C++ defaults: first = 20, count = 2
+	defer s.Close()
+	scaled, _ := s.ScaledSum(2)
+	second, _ := s.Get(1)
+	fmt.Println(scaled, second) // 82 21
+	big, _ := go_demo.TooLarge()
+	fmt.Println(big) // 9007199254740993
+	var e *go_demo.Error
+	if err := go_demo.Fail(); errors.As(err, &e) {
+		fmt.Println(e.Kind, e.Message) // native native failure
+		fmt.Println(err)               // go_demo: r_demo::fail: native failure (native)
+	}
+}
+```
+
+Every function returns its result and an `error`; methods take the object as a pointer receiver. Names are exported CamelCase (`scaled_sum` is `ScaledSum`), and namespaces do not appear in them, so `r_demo::add` is `Add`. A selected class `K` becomes a type `K` with `NewK`, methods, field getters `Field()` and setters `SetField(v)` (none for const fields), and `Close() error`, so it satisfies `io.Closer`; static methods are package functions `KMethod`. Names that collide after these changes, including a method named `close`, fail generation. Parameters keep their C\+\+ names in lowerCamelCase unless they would shadow a Go keyword or builtin. Public trailing defaults become a final variadic parameter when they share one Go type (`NewSeries()`, `NewSeries(1)`, `NewSeries(1, 3)`); passing too many returns an `Argument` error. Defaults of mixed types are all required.
+
+Types map exactly: `bool`, `byte` (`char`), `int8`/`uint8`, `int16`/`uint16`, `int32`/`uint32` (`int`), `int64`/`uint64` (`long`, `long long`), `float32`, `float64` and `string`. No conversion is lossy, so only a 32-bit `long` checks its range. Floats pass unchanged, including infinities and NaN. Strings are bytes in both directions, preserving NULs and any encoding; C\+\+ copies them during the call.
+
+Errors are `*Error` values with `Kind` (`KindAllocation`, `KindRange`, `KindIndex`, `KindArgument`, `KindNative` or `KindClosed`), the C\+\+ `Function` and its `Message`; use `errors.As`. C\+\+ exceptions never cross into Go.
+
+Each object holds a C\+\+ cell owning the native value. `Close` destroys it at once; later calls, and calls on a nil pointer or zero value, return `KindClosed`. Otherwise a `runtime.AddCleanup` cleanup destroys it after it becomes unreachable. Go runs neither cleanups nor C\+\+ destructors at exit, so call `Close` for objects whose destructors matter, such as worker threads. Native calls, closes and cleanups are serialized per package, so goroutines may share objects; native workers never call into Go.
+
+Run `just go-test` for an isolated `build/go-tests` build, which runs the tests plain and under the race detector and checks the generated packages with `gofmt` and `go vet`. CMake consumers can call:
+
+```{cmake, eval=false}
+rosetta_generate_go(HEADER api.hpp MODULE library
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/library.cpp"
+  GO_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/library/library.go" POLICY api.policy.json)
+add_library(library_stubs STATIC "${CMAKE_CURRENT_BINARY_DIR}/library.cpp")
+set_target_properties(library_stubs PROPERTIES POSITION_INDEPENDENT_CODE ON
+  ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/library")
+```
+
+[GoExample.cmake|cmake/GoExample.cmake] shows the full build, including each package's `go.mod` and the `go.work`. Enable `ROSETTA_BUILD_GO_EXAMPLES` for the repository packages. Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Enums, containers, overloads, callbacks, class-valued/borrowed values, inheritance, Go interfaces and Windows link flags remain open. Tested with Go 1.26.3 on macOS (arm64); other platforms remain unverified.
+
+>> APL
+
+Select APL with `--language apl`. One generation serves GNU APL and Dyalog APL: it writes C\+\+ with a C ABI, a GNU APL script `MODULE.apl` and a Dyalog namespace script `MODULE.apln` (beside the output, or `--gnu-apl-output` and `--dyalog-output`). Both scripts load their libraries from `--apl-library-dir` (default `.`). Compiled alone, the C\+\+ is `libMODULE_apl.so`, which Dyalog calls through `⎕NA`. Compiled with `-DROSETTA_GNU_APL` against a configured GNU APL source tree, it is `libMODULE_gnu_apl.so`, a GNU APL native function that calls the same C ABI. GNU APL native functions use the interpreter's own C\+\+ headers, so `ROSETTA_GNU_APL_SOURCE_DIR` must name a source tree of the installed version on which `./configure` has run. The Nix shells set it on Linux; on macOS, where nixpkgs' GNU APL is marked broken, install `apl` (for example with Homebrew) and configure its source yourself. Generation needs neither APL.
+
+```{sh, nix-shell=".#readme-shell"}
+just run examples/r_demo.hpp --language apl --module apl_demo --policy examples/r_demo.policy.json \
+  -o build/apl/apl_demo.cpp --apl-library-dir "$PWD/build/apl"
+cd build/apl
+clang++ -std=c++17 -shared -fPIC apl_demo.cpp -o libapl_demo_apl.so   # Dyalog
+clang++ -std=c++17 -shared -fPIC -DROSETTA_GNU_APL -DHAVE_CONFIG_H apl_demo.cpp -o libapl_demo_gnu_apl.so \
+  -isystem "$ROSETTA_GNU_APL_SOURCE_DIR" -isystem "$ROSETTA_GNU_APL_SOURCE_DIR/src" \
+  $( [ "$(uname)" = Darwin ] && echo -undefined dynamic_lookup )   # GNU APL supplies its symbols
+printf 'apl_demo∆add 20 22\n)OFF\n' > hello.apl
+apl --script --noSV --silent -f apl_demo.apl -f hello.apl   # 42
+```
+
+MEP has no APL runner, so GNU APL chunks set `cmd` to the `readme-gnu-apl` shell's command, which runs the generated scripts before the chunk:
+
+```{apl, nix-shell=".#readme-gnu-apl", cmd="$ROSETTA_README_APL {file}"}
+apl_demo∆add 20 22                       ⍝ 42
+C←apl_demo∆Counter∆new 20
+C apl_demo∆Counter∆add 22                ⍝ 42: the object is on the left
+C apl_demo∆Counter∆set_count 7
+C apl_demo∆Counter∆set_label 'APL 😀'
+(apl_demo∆Counter∆value C)(apl_demo∆Counter∆label C)   ⍝ 7 APL 😀
+apl_demo∆Counter∆close C                 ⍝ destroys the native object
+S←apl_verify∆Series∆new ⍬                ⍝ ⍬ keeps C++'s defaults: first 20, count 2
+(S apl_verify∆Series∆scaled_sum 2)(S apl_verify∆Series∆get 1)   ⍝ 82 21
+apl_demo∆too_large                       ⍝ 9007199254740993
+apl_demo∆greet 'APL'                     ⍝ Hello, APL!
+R←⎕EC 'apl_demo∆fail'                    ⍝ traps the failure
+2⊃R                                      ⍝ 505 0: a native C++ exception
+2⊃apl_demo∆last_error                    ⍝ apl_demo: r_demo::fail: native failure (native)
+```
+
+In GNU APL, load the bindings with `)COPY` (or `-f`); GNU APL has no namespaces, so every name starts with the module: `apl_demo∆add`. A selected class `K` gives `MODULE∆K∆new`, methods `MODULE∆K∆method`, field getters `MODULE∆K∆field` and setters `MODULE∆K∆set_field` (none for const fields), `MODULE∆K∆close`, and static methods `MODULE∆K∆method` without an object. Methods take the object on the left, or on the right when they have no parameters. Objects are handles, checked on every call: a closed, forged or wrongly typed handle fails, and handles belong to their own library. `)CLEAR` and exit destroy the objects still open.
+
+In Dyalog, `⎕FIX 'file://…/apl_demo.apln'` creates the namespace `apl_demo`. Functions keep their names (`apl_demo.add 20 22`), a class `K` is a Dyalog class created with `⎕NEW apl_demo.K args` (niladic when every argument is optional), fields are properties (`c.count←7`), and an object is destroyed by `c.close` or when its last reference goes. These Dyalog lines show the interface; the README does not run them, and the Dyalog tests run only where `dyalogscript` is installed:
+
+```{apl, eval=false}
+⎕FIX 'file://build/apl/dyalog/apl_demo.apln'
+apl_demo.add 20 22                       ⍝ 42
+c←⎕NEW apl_demo.Counter 20
+c.add 22                                 ⍝ 42
+c.count←7
+c.label←'Dyalog 😀'
+c.value                                  ⍝ 7
+c.close
+apl_demo.fail                            ⍝ NATIVE ERROR, ⎕DMX.EN 505
+```
+
+In both dialects a function's argument is its single argument, or a vector of its arguments: `apl_demo∆add 20 22`. Nest strings in a vector (`join (,'a') (,'+')`, or `repeat 3 'ab'`), though a plain string is one argument when the first parameter is a string. Trailing C\+\+ defaults are optional, of any types: pass fewer arguments, or `⍬` for none. Namespaces do not appear in names (`r_demo::add` is `add`), so names that collide, or that clash with generated ones such as `close`, `set_count` or `last_error`, fail generation.
+
+Integers map to APL integers and are range-checked against the C\+\+ type; integral floats such as `2*63` are accepted, and unsigned results above the signed 64-bit range are returned as floats only when exact. `double` and `float` are APL floats, and non-finite results are range errors. `bool` is 0 or 1, `char` is one character with a code point up to 255, and `std::string` is a character vector passed as UTF-8 (results must be valid UTF-8). Dyalog holds integers beyond 32 bits as floats, so values past 2⁵³ lose precision there unless `⎕FR` is 1287.
+
+A failure signals event 501 to 506 for allocation, range, index, argument, native and closed errors, with the message `MODULE: C++ name: message (kind)`: `⎕ET` is `(500+kind) 0` in GNU APL, and `⎕DMX.EN` in Dyalog. GNU APL's traps (`⎕EC`, `⎕EA`) report only the event, so `MODULE∆last_error` (Dyalog: `MODULE.last_error`) returns the latest failure's kind and message. C\+\+ exceptions never cross into APL. Native calls are serialized per library.
+
+Run `just apl-test` for an isolated `build/apl-tests` build with GNU APL; add `-DROSETTA_BUILD_DYALOG_EXAMPLES=ON` where `dyalogscript` is installed. `just apl-repl` opens GNU APL with the examples loaded. CMake consumers can call:
+
+```{cmake, eval=false}
+rosetta_generate_apl(HEADER api.hpp MODULE library OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/library.cpp"
+  APL_LIBRARY_DIR "${CMAKE_CURRENT_BINARY_DIR}" POLICY api.policy.json)
+add_library(library_apl MODULE "${CMAKE_CURRENT_BINARY_DIR}/library.cpp")   # Dyalog
+set_target_properties(library_apl PROPERTIES PREFIX "lib" SUFFIX ".so")
+```
+
+[AplExample.cmake|cmake/AplExample.cmake] also builds the GNU APL library. Enable `ROSETTA_BUILD_GNU_APL_EXAMPLES` or `ROSETTA_BUILD_DYALOG_EXAMPLES` for the repository libraries. Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Enums, arrays and containers, overloads, callbacks, class-valued/borrowed values, inheritance and Windows remain open. GNU APL 2.0 is tested on macOS (arm64), and the bindings compile against GNU APL 1.9's headers; the Dyalog front end has not yet run under Dyalog, though its C ABI is exercised through the GNU APL bridge.
+
+>> COBOL
+
+Select COBOL with `--language cobol`. Generation writes the C\+\+ stubs and a copybook `MODULE.cpy` (beside the output, or `--cobol-output`) with a status record and one parameter record per call. Generation does not need COBOL. Compile the stubs into a library and link it into the program with GnuCOBOL's `cobc`, using `-fstatic-call` so each `CALL` literal links directly to its stub:
+
+```{sh, nix-shell=".#readme-shell"}
+just run examples/r_demo.hpp --language cobol --module cobol_demo --policy examples/r_demo.policy.json \
+  -o build/cobol/cobol_demo.cpp
+cd build/cobol
+clang++ -std=c++17 -c cobol_demo.cpp -o cobol_demo.o && ar rcs libcobol_demo.a cobol_demo.o
+printf '%s\n' 'IDENTIFICATION DIVISION.' 'PROGRAM-ID. HELLO.' 'DATA DIVISION.' 'WORKING-STORAGE SECTION.' \
+  'COPY "cobol_demo.cpy".' 'PROCEDURE DIVISION.' '    MOVE 20 TO COBOL-DEMO-ADD-A' '    MOVE 22 TO COBOL-DEMO-ADD-B' \
+  '    CALL "cobol_demo_add" USING COBOL-DEMO-ADD COBOL-DEMO-STATUS' '    DISPLAY COBOL-DEMO-ADD-RESULT' '    STOP RUN.' > hello.cob
+cobc -x -free -fstatic-call hello.cob -L. -lcobol_demo -Q "$( [ "$(uname)" = Darwin ] && echo -lc++ || echo -lstdc++ )" -o hello
+./hello   # +0000000042
+```
+
+MEP has no COBOL runner, so COBOL chunks set `cmd` to the `readme-cobol` shell's command, which compiles the chunk (free format) against the generated copybooks and libraries and runs it:
+
+```{cobol, nix-shell=".#readme-cobol", cmd="$ROSETTA_README_COBOL {file}"}
+IDENTIFICATION DIVISION.
+PROGRAM-ID. HELLO.
+DATA DIVISION.
+WORKING-STORAGE SECTION.
+COPY "cobol_demo.cpy".
+COPY "cobol_verify.cpy".
+01 COUNTER USAGE BINARY-DOUBLE UNSIGNED.
+PROCEDURE DIVISION.
+    MOVE 20 TO COBOL-DEMO-ADD-A
+    MOVE 22 TO COBOL-DEMO-ADD-B
+    CALL "cobol_demo_add" USING COBOL-DEMO-ADD COBOL-DEMO-STATUS
+    DISPLAY COBOL-DEMO-ADD-RESULT                      *> +0000000042
+
+    MOVE 20 TO COBOL-DEMO-COUNTER-NEW-VALUE
+    CALL "cobol_demo_counter_new" USING COBOL-DEMO-COUNTER-NEW COBOL-DEMO-STATUS
+    MOVE COBOL-DEMO-COUNTER-NEW-RESULT TO COUNTER     *> a handle
+    MOVE COUNTER TO COBOL-DEMO-COUNTER-ADD-SELF
+    MOVE 22 TO COBOL-DEMO-COUNTER-ADD-AMOUNT
+    CALL "cobol_demo_counter_add" USING COBOL-DEMO-COUNTER-ADD COBOL-DEMO-STATUS
+    DISPLAY COBOL-DEMO-COUNTER-ADD-RESULT              *> +0000000042
+    MOVE COUNTER TO COBOL-DEMO-COUNTER-LABEL-SELF
+    MOVE "COBOL 😀" TO COBOL-DEMO-COUNTER-LABEL-VALUE   *> -1: trailing spaces trimmed
+    CALL "cobol_demo_counter_set_label" USING COBOL-DEMO-COUNTER-LABEL COBOL-DEMO-STATUS
+    CALL "cobol_demo_counter_get_label" USING COBOL-DEMO-COUNTER-LABEL COBOL-DEMO-STATUS
+    DISPLAY COBOL-DEMO-COUNTER-LABEL-VALUE(1:COBOL-DEMO-COUNTER-LABEL-VALUE-LENGTH)   *> COBOL 😀
+    MOVE COUNTER TO COBOL-DEMO-COUNTER-CLOSE-SELF
+    CALL "cobol_demo_counter_close" USING COBOL-DEMO-COUNTER-CLOSE COBOL-DEMO-STATUS
+
+    CALL "cobol_verify_series_new" USING COBOL-VERIFY-SERIES-NEW COBOL-DEMO-STATUS   *> -GIVEN 0: C++ defaults
+    MOVE COBOL-VERIFY-SERIES-NEW-RESULT TO COBOL-VERIFY-SERIES-SCALED-SUM-SELF
+    MOVE 2 TO COBOL-VERIFY-SERIES-SCALED-SUM-FACTOR
+    CALL "cobol_verify_series_scaled_sum" USING COBOL-VERIFY-SERIES-SCALED-SUM COBOL-DEMO-STATUS
+    DISPLAY COBOL-VERIFY-SERIES-SCALED-SUM-RESULT      *> +0000000082
+
+    CALL "cobol_demo_fail" USING COBOL-DEMO-FAIL COBOL-DEMO-STATUS
+    IF COBOL-DEMO-STATUS-NATIVE
+        DISPLAY RETURN-CODE " " FUNCTION TRIM(COBOL-DEMO-STATUS-KIND) ": "
+            COBOL-DEMO-STATUS-MESSAGE(1:COBOL-DEMO-STATUS-LENGTH)   *> +000000005 native: r_demo::fail: native failure
+    END-IF
+    MOVE 0 TO RETURN-CODE
+    STOP RUN.
+```
+
+COPY the copybook into WORKING-STORAGE, set a call's parameter record, then `CALL "SYMBOL" USING RECORD MODULE-STATUS`. A record is named after the module and the C\+\+ name in upper case with hyphens (`cobol_demo` and `r_demo::add` give `COBOL-DEMO-ADD`, `AsyncTask` gives `ASYNC-TASK`), and its fields after the parameters, then `-RESULT`; the stub's name is the record's in lower case with underscores. Namespaces do not appear in names, and COBOL words are case-insensitive, so names that collide, or that clash with generated ones such as `MODULE-STATUS`, fail generation, as do names longer than 56 characters (so every copybook line fits fixed format's columns 8 to 72). Parameters named `self`, `given` or `result` become `ARG-n`. The copybook compiles in both fixed-format and free-format programs.
+
+A selected class `K` gets records `MODULE-K-NEW` (its `-RESULT` is a handle), `MODULE-K-METHOD` with the handle in `-SELF`, `MODULE-K-CLOSE`, and one record `MODULE-K-FIELD` per field, with `-SELF` and `-VALUE`, which `module_k_get_field` reads and `module_k_set_field` writes (no setter for const fields). Static methods are records without `-SELF`. Handles are `BINARY-DOUBLE UNSIGNED` numbers checked on every call: closed, forged or wrongly typed ones fail, closing twice is harmless, and objects still open are destroyed at exit. Calls with C\+\+ defaults have a `-GIVEN` field, the number of arguments to send, which starts at the required count: raise it to send optional ones.
+
+Fields have the C\+\+ types' exact sizes: `BINARY-CHAR`/`SHORT`/`LONG`/`DOUBLE` `SIGNED` or `UNSIGNED` for integers (`long` is `BINARY-DOUBLE` and checked against the C\+\+ range), `COMP-1` and `COMP-2` for `float` and `double`, `BINARY-CHAR UNSIGNED` 0 or 1 for `bool`, and `PIC X` for `char`. A `std::string` is a `PIC X(256)` field (`--cobol-string-size` changes the capacity) with a `-LENGTH`: the default -1 sends the text without trailing spaces, and 0 to 256 sends exactly that many bytes, so text with trailing spaces or NULs can pass. Results set the length, and a result longer than its field is a range error that sets the length it needed. Strings are bytes in both directions.
+
+Every stub returns its status code, which COBOL stores in `RETURN-CODE`, and fills `MODULE-STATUS`: `-STATUS-CODE` with conditions `MODULE-STATUS-OK`, `-ALLOCATION`, `-RANGE`, `-INDEX`, `-ARGUMENT`, `-NATIVE` and `-CLOSED`; `-STATUS-KIND`; and `-STATUS-MESSAGE` with its `-STATUS-LENGTH` (the C\+\+ name and message). `OMITTED` in place of the status record leaves only `RETURN-CODE`. `STOP RUN` uses `RETURN-CODE` as the exit status, so reset it after an expected failure. C\+\+ exceptions never cross into COBOL, and calls are serialized per library.
+
+Run `just cobol-test` for an isolated `build/cobol-tests` build, which runs the tests from a free-format program and compiles the copybooks into a fixed-format one. CMake consumers can call:
+
+```{cmake, eval=false}
+rosetta_generate_cobol(HEADER api.hpp MODULE library OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/library.cpp"
+  COBOL_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/copybooks/library.cpy" POLICY api.policy.json)
+add_library(library STATIC "${CMAKE_CURRENT_BINARY_DIR}/library.cpp")
+```
+
+[CobolExample.cmake|cmake/CobolExample.cmake] shows the full build, including the `cobc` link. Enable `ROSETTA_BUILD_COBOL_EXAMPLES` for the repository libraries; nixpkgs has no prebuilt GnuCOBOL for macOS, so there the shells use the `cobc` on `PATH` (for example Homebrew's). Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Enums, arrays and containers (COBOL tables), overloads, callbacks, class-valued/borrowed values, inheritance, other COBOL compilers and Windows remain open. Tested with GnuCOBOL 3.2 on macOS (arm64); other platforms remain unverified.
 
 >> Current Lua interface
 
