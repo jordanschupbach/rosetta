@@ -28,10 +28,91 @@ std::set<std::string> names(const Json& value, const std::string& context) {
 BindingPolicy load_policy(const std::filesystem::path& path) {
     try {
         const auto root = Json::parse(detail::read_file(path));
-        keys(root, {"version", "classes", "callbacks", "enums"}, "policy");
+        keys(root, {"version", "classes", "callbacks", "enums", "select", "exclude", "rename", "templates", "extend",
+                    "returns", "readonly", "docs", "convert", "names", "sequences", "directors", "scope", "exceptions"}, "policy");
         if (!root.contains("version") || !root["version"].is_number_integer() || root["version"] != 1)
             throw BindingError("policy version must be 1");
         BindingPolicy policy;
+        const auto string_map = [](const Json& value, const std::string& context) {
+            if (!value.is_object()) throw BindingError(context + " must be an object");
+            std::map<std::string, std::string> result;
+            for (const auto& item : value.items()) {
+                if (item.key().empty() || !item.value().is_string() || item.value().get<std::string>().empty())
+                    throw BindingError(context + ": expected nonempty names and string values");
+                result.emplace(item.key(), item.value().get<std::string>());
+            }
+            return result;
+        };
+        const auto list = [](const Json& value, const std::string& context) {
+            if (!value.is_array()) throw BindingError(context + " must be an array of names");
+            std::vector<std::string> result;
+            for (const auto& item : value) {
+                if (!item.is_string() || item.get<std::string>().empty()) throw BindingError(context + ": expected a nonempty name");
+                result.push_back(item.get<std::string>());
+            }
+            return result;
+        };
+        const auto choice = [&](const char* key, std::initializer_list<const char*> allowed, std::string& target) {
+            if (!root.contains(key)) return;
+            const auto& value = root[key];
+            if (value.is_string())
+                for (const auto* option : allowed) if (value == option) { target = option; return; }
+            std::string options;
+            for (const auto* option : allowed) options += std::string(options.empty() ? "" : ", ") + option;
+            throw BindingError(std::string("policy ") + key + " must be one of: " + options);
+        };
+        if (root.contains("select")) {
+            if (root["select"] != "all") throw BindingError("policy select must be \"all\"");
+            policy.select_all = true;
+        }
+        if (root.contains("exclude")) policy.exclude = list(root["exclude"], "policy exclude");
+        if (root.contains("scope"))
+            for (const auto& item : list(root["scope"], "policy scope")) {
+                const std::filesystem::path scope(item);
+                policy.scopes.push_back(scope.is_absolute() ? scope : path.parent_path() / scope);
+            }
+        if (root.contains("readonly")) policy.readonly = list(root["readonly"], "policy readonly");
+        if (root.contains("rename")) policy.rename = string_map(root["rename"], "policy rename");
+        if (root.contains("docs")) policy.docs = string_map(root["docs"], "policy docs");
+        if (root.contains("convert")) policy.conversions = string_map(root["convert"], "policy convert");
+        if (root.contains("templates")) {
+            if (!root["templates"].is_object()) throw BindingError("policy templates must be an object");
+            for (const auto& item : root["templates"].items()) {
+                if (item.key().empty() || !item.value().is_string() || item.value().get<std::string>().find('<') == std::string::npos)
+                    throw BindingError("policy templates map a name to a specialization such as ns::Box<int>");
+                policy.templates.emplace_back(item.key(), item.value().get<std::string>());
+            }
+        }
+        if (root.contains("returns")) {
+            policy.returns = string_map(root["returns"], "policy returns");
+            for (const auto& item : policy.returns)
+                if (item.second != "owned" && item.second != "copy" && item.second != "borrowed")
+                    throw BindingError("policy returns for " + item.first + " must be owned, copy or borrowed");
+        }
+        if (root.contains("extend")) {
+            if (!root["extend"].is_object()) throw BindingError("policy extend must be an object");
+            for (const auto& item : root["extend"].items())
+                policy.extend.emplace(item.key(), string_map(item.value(), "policy extend " + item.key()));
+        }
+        choice("names", {"qualified", "flat"}, policy.names);
+        choice("sequences", {"list", "tuple", "vector"}, policy.sequences);
+        if (root.contains("exceptions")) {
+            const auto& rules = root["exceptions"];
+            if (!rules.is_array()) throw BindingError("policy exceptions must be an array of {match, map} rules");
+            for (const auto& rule : rules) {
+                keys(rule, {"match", "map"}, "policy exceptions rule");
+                if (!rule.contains("match") || !rule["match"].is_string() || !rule.contains("map") || !rule["map"].is_array())
+                    throw BindingError("policy exceptions rules need a match pattern and a map array");
+                std::vector<std::pair<std::string, std::string>> map;
+                for (const auto& entry : rule["map"]) {
+                    if (!entry.is_array() || entry.size() != 2 || !entry[0].is_string() || !entry[1].is_string())
+                        throw BindingError("policy exceptions map entries are [C++ exception type, Python exception name]");
+                    map.emplace_back(entry[0].get<std::string>(), entry[1].get<std::string>());
+                }
+                policy.exceptions.emplace_back(rule["match"].get<std::string>(), std::move(map));
+            }
+        }
+        choice("directors", {"auto", "none"}, policy.directors);
         if (root.contains("enums")) {
             if (!root["enums"].is_object()) throw BindingError("enum policy must be an object");
             for (const auto& item : root["enums"].items()) {
@@ -95,4 +176,17 @@ BindingPolicy load_policy(const std::filesystem::path& path) {
         throw BindingError("invalid binding policy: " + std::string(error.what()));
     }
 }
+bool policy_match(const std::string& pattern, const std::string& name) {
+    // Iterative glob matching with backtracking to the last '*'.
+    std::size_t p = 0, n = 0, star = std::string::npos, mark = 0;
+    while (n < name.size()) {
+        if (p < pattern.size() && pattern[p] == '*') { star = p++; mark = n; }
+        else if (p < pattern.size() && pattern[p] == name[n]) { ++p; ++n; }
+        else if (star != std::string::npos) { p = star + 1; n = ++mark; }
+        else return false;
+    }
+    while (p < pattern.size() && pattern[p] == '*') ++p;
+    return p == pattern.size();
+}
+
 } // namespace rosetta

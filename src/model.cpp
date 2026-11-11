@@ -39,6 +39,12 @@ std::string Enumeration::qualified_name() const {
     return result + name;
 }
 
+std::string Variable::qualified_name() const {
+    std::string result;
+    for (const auto& part : namespaces) result += part + "::";
+    return result + name;
+}
+
 std::string Record::qualified_name() const {
     std::string result;
     for (const auto& part : namespaces) result += part + "::";
@@ -68,7 +74,14 @@ std::string serialize_ir(const Module& module) {
                              {"static", f.is_static}, {"const", f.is_const}, {"deleted", f.is_deleted},
                              {"noexcept", f.is_noexcept},
                              {"default_arguments", f.default_arguments},
-                             {"unsupported_reason", f.unsupported_reason}};
+                             {"unsupported_reason", f.unsupported_reason},
+                             {"parameter_names", f.parameter_names},
+                             {"virtual", f.is_virtual}, {"pure", f.is_pure}, {"doc", f.doc}};
+    };
+    const auto variable_json = [&](const Variable& v) {
+        return Json{{"name", v.name}, {"namespaces", v.namespaces}, {"identity", v.qualified_name()},
+                    {"type", type_json(type_json, v.type)}, {"owner", v.owner}, {"access", v.access},
+                    {"constexpr", v.is_constexpr}, {"location", location_json(v.location)}, {"doc", v.doc}};
     };
     auto functions = Json::array();
     for (const auto& f : module.functions) functions.push_back(function_json(f));
@@ -76,7 +89,7 @@ std::string serialize_ir(const Module& module) {
     for (const auto& e : module.enumerations)
         enumerations.push_back({{"name", e.name}, {"namespaces", e.namespaces},
             {"identity", e.qualified_name()}, {"enumerators", e.enumerators}, {"enumerator_values", e.enumerator_values}, {"underlying_type", e.underlying_type},
-            {"scoped", e.scoped}, {"selected", e.selected}, {"owner", e.owner}, {"location", location_json(e.location)}});
+            {"scoped", e.scoped}, {"selected", e.selected}, {"owner", e.owner}, {"location", location_json(e.location)}, {"doc", e.doc}});
     auto records = Json::array();
     for (const auto& r : module.records) {
         auto constructors = Json::array(), methods = Json::array(), fields = Json::array();
@@ -84,15 +97,23 @@ std::string serialize_ir(const Module& module) {
         for (const auto& m : r.methods) methods.push_back(function_json(m));
         for (const auto& f : r.fields)
             fields.push_back({{"name", f.name}, {"type", type_json(type_json, f.type)},
-                {"access", f.access}, {"bitfield", f.bitfield}, {"location", location_json(f.location)}});
+                {"access", f.access}, {"bitfield", f.bitfield}, {"location", location_json(f.location)}, {"doc", f.doc}});
+        auto bases = Json::array(), statics = Json::array();
+        for (const auto& b : r.bases)
+            bases.push_back({{"type", type_json(type_json, b.type)}, {"access", b.access}, {"virtual", b.is_virtual}});
+        for (const auto& v : r.static_fields) statics.push_back(variable_json(v));
         records.push_back({{"name", r.name}, {"identity", r.qualified_name()}, {"namespaces", r.namespaces},
             {"constructors", constructors}, {"methods", methods}, {"fields", fields}, {"complete", r.complete},
             {"abstract", r.abstract}, {"public_destructor", r.public_destructor}, {"has_bases", r.has_bases},
-            {"unsupported_reason", r.unsupported_reason}, {"owner", r.owner}, {"location", location_json(r.location)}});
+            {"unsupported_reason", r.unsupported_reason}, {"owner", r.owner}, {"location", location_json(r.location)},
+            {"bases", bases}, {"static_fields", statics}, {"polymorphic", r.polymorphic},
+            {"virtual_destructor", r.virtual_destructor}, {"final", r.is_final}, {"template_name", r.template_name}, {"doc", r.doc}});
     }
+    auto variables = Json::array();
+    for (const auto& v : module.variables) variables.push_back(variable_json(v));
     const auto& context = module.parse_context;
     return Json{{"header", module.header}, {"functions", functions}, {"diagnostics", module.diagnostics},
-                {"enumerations", enumerations}, {"records", records}, {"dependencies", module.dependencies},
+                {"enumerations", enumerations}, {"records", records}, {"variables", variables}, {"dependencies", module.dependencies},
                 {"parse_context", {{"compiler", context.compiler}, {"directory", context.directory}, {"flags", context.flags},
                     {"compilation_database", context.compilation_database}, {"translation_unit", context.translation_unit},
                     {"command_index", context.compilation_database.empty() ? Json(nullptr) : Json(context.command_index)}}}}.dump(2) + "\n";

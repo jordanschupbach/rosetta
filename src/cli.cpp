@@ -53,6 +53,11 @@ Generate native language bindings from a C++ header.
   --dump-ir PATH         Export the normalized declaration model as JSON
   --depfile PATH         Export compiler-discovered inputs as a Make/Ninja depfile
   --policy PATH          Explicit class selection and lifetime policy (JSON)
+  --scope PATH           Also export declarations from this header or directory (repeatable)
+  --skip-function-bodies Parse declarations only (faster for large libraries)
+  --python-parts N       Split Python output over N sources: OUTPUT holds module init, the
+                         rest go to OUTPUT's stem + _1.._N-1 (compile them in parallel)
+  --include-as SPELLING  #include spelling for HEADER in generated code (default: its path)
   --compile-commands PATH  Compilation database file or build directory
   --translation-unit PATH  Select the source command supplying parser flags
   --command-index N      Select a zero-based database entry (for duplicate configurations)
@@ -65,11 +70,13 @@ Generate native language bindings from a C++ header.
 int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::ostream& err) {
     try {
         std::string header, name, output, dump_ir, depfile, policy_path, clang = "clang++";
-        std::string database_path, translation_unit;
+        std::string database_path, translation_unit, include_as;
+        std::size_t python_parts = 1;
         std::string language = "lua", object_system, r_output, julia_output, java_output, java_package, csharp_output, csharp_namespace, fortran_output, lisp_output, guile_output, ocaml_output, go_output, gnu_apl_output, dyalog_output, apl_library_dir, cobol_output, cobol_string_size;
         std::optional<std::size_t> command_index;
         std::vector<std::string> extra_flags;
-        bool skip = false;
+        std::vector<std::filesystem::path> scopes;
+        bool skip = false, skip_bodies = false;
         for (std::size_t i = 0; i < arguments.size(); ++i) {
             const auto& arg = arguments[i];
             if (arg == "--") {
@@ -78,13 +85,26 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             }
             if (arg == "--help" || arg == "-h") { out << usage; return 0; }
             if (arg == "--skip-unsupported") { skip = true; continue; }
+            if (arg == "--skip-function-bodies") { skip_bodies = true; continue; }
+            if (arg == "--scope") {
+                if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
+                    throw BindingError("missing value for " + arg);
+                scopes.emplace_back(arguments[i]);
+                continue;
+            }
             if (arg == "--module" || arg == "--output" || arg == "-o" || arg == "--clang" ||
                 arg == "--dump-ir" || arg == "--depfile" || arg == "--policy" || arg == "--language" || arg == "--compile-commands" ||
-                arg == "--translation-unit" || arg == "--command-index" || arg == "--object-system" || arg == "--r-output" || arg == "--julia-output" || arg == "--java-output" || arg == "--java-package" || arg == "--csharp-output" || arg == "--csharp-namespace" || arg == "--fortran-output" || arg == "--lisp-output" || arg == "--guile-output" || arg == "--ocaml-output" || arg == "--go-output" || arg == "--gnu-apl-output" || arg == "--dyalog-output" || arg == "--apl-library-dir" || arg == "--cobol-output" || arg == "--cobol-string-size") {
+                arg == "--translation-unit" || arg == "--command-index" || arg == "--object-system" || arg == "--r-output" || arg == "--julia-output" || arg == "--java-output" || arg == "--java-package" || arg == "--csharp-output" || arg == "--csharp-namespace" || arg == "--fortran-output" || arg == "--lisp-output" || arg == "--guile-output" || arg == "--ocaml-output" || arg == "--go-output" || arg == "--gnu-apl-output" || arg == "--dyalog-output" || arg == "--apl-library-dir" || arg == "--cobol-output" || arg == "--cobol-string-size" || arg == "--include-as" || arg == "--python-parts") {
                 if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
                     throw BindingError("missing value for " + arg);
                 const auto& value = arguments[i];
                 if (arg == "--module") name = value;
+                else if (arg == "--include-as") include_as = value;
+                else if (arg == "--python-parts") {
+                    const auto parsed = std::from_chars(value.data(), value.data() + value.size(), python_parts);
+                    if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || python_parts == 0 || python_parts > 256)
+                        throw BindingError("--python-parts must be an integer from 1 to 256");
+                }
                 else if (arg == "--output" || arg == "-o") output = value;
                 else if (arg == "--clang") clang = value;
                 else if (arg == "--dump-ir") dump_ir = value;
@@ -124,6 +144,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         if (header.empty() || name.empty() || output.empty())
             throw BindingError("HEADER, --module and --output are required; use --help for usage");
         if (language != "lua" && language != "r" && language != "python" && language != "ruby" && language != "octave" && language != "julia" && language != "java" && language != "csharp" && language != "fortran" && language != "common-lisp" && language != "tcl" && language != "guile" && language != "ocaml" && language != "go" && language != "apl" && language != "cobol") throw BindingError("unsupported language: " + language);
+        if (language != "python" && python_parts != 1) throw BindingError("--python-parts requires --language python");
         if (language != "r" && (!object_system.empty() || !r_output.empty()))
             throw BindingError("--object-system and --r-output require --language r");
         if (language == "r") {
@@ -247,13 +268,21 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         std::vector<std::string> flags{"-std=c++17"};
         if (compilation) flags.insert(flags.end(), compilation->flags.begin(), compilation->flags.end());
         flags.insert(flags.end(), extra_flags.begin(), extra_flags.end());
-        auto module = parse(input_path, clang, flags, compilation ? compilation->directory : std::filesystem::path{}, !depfile.empty());
+        ParseOptions parse_options;
+        parse_options.scopes = scopes;
+        parse_options.scopes.insert(parse_options.scopes.end(), policy.scopes.begin(), policy.scopes.end());
+        parse_options.skip_function_bodies = skip_bodies;
+        for (const auto& requested : policy.templates) parse_options.instantiations.push_back(requested.second);
+        auto module = parse(input_path, clang, flags, compilation ? compilation->directory : std::filesystem::path{}, !depfile.empty(),
+                            parse_options);
+        if (!include_as.empty()) module.header = include_as;
         if (compilation) {
             module.parse_context.compilation_database = compilation->database.string();
             module.parse_context.translation_unit = compilation->file.string();
             module.parse_context.command_index = compilation->index;
         }
         GeneratedSource generated;
+        std::vector<std::pair<std::filesystem::path, std::string>> extra_sources;
         std::string language_interface, second_interface;
         if (language == "r") {
             const auto system = object_system == "s3" ? RObjectSystem::s3 : object_system == "s4" ? RObjectSystem::s4 : RObjectSystem::r6;
@@ -261,8 +290,13 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             generated = {r.source, r.diagnostics};
             language_interface = r.interface;
         } else if (language == "python") {
-            const auto python = generate_python(module, name, skip, policy);
+            const auto python = generate_python(module, name, skip, policy, python_parts);
             generated = {python.source, python.diagnostics};
+            for (std::size_t i = 0; i < python.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, python.parts[i]);
+            }
         } else if (language == "ruby") {
             const auto ruby = generate_ruby(module, name, skip, policy);
             generated = {ruby.source, ruby.diagnostics};
@@ -326,8 +360,10 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             dependency_contents = detail::dependency_rule(output_path, prerequisites);
             if (!interface_path.empty()) dependency_contents += detail::dependency_rule(interface_path, prerequisites);
             if (!second_path.empty()) dependency_contents += detail::dependency_rule(second_path, prerequisites);
+            for (const auto& [path, source] : extra_sources) dependency_contents += detail::dependency_rule(path, prerequisites);
         }
         detail::write_file(output_path, generated.source);
+        for (const auto& [path, source] : extra_sources) detail::write_file(path, source);
         if (!interface_path.empty()) detail::write_file(interface_path, language_interface);
         if (!second_path.empty()) detail::write_file(second_path, second_interface);
         if (!dump_ir.empty()) detail::write_file(ir_path, serialize_ir(module));

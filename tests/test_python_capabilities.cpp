@@ -30,31 +30,19 @@ int main(int argc, char** argv) {
         struct Case { const char* label; const char* source; const char* reason; bool select = false; };
         const Case cases[] = {
             {"extended numeric", "long double unsupported();", "unsupported Python result type"},
-            {"enum", "enum class Mode { a, b };", "enum bindings are not yet supported"},
-            {"overload", "int unsupported(int); int unsupported(double);", "overloads"},
             {"pointer", "void unsupported(int*);", "unsupported Python parameter type"},
-            {"mutable reference", "void unsupported(int&);", "unsupported Python parameter type"},
-            {"rvalue reference", "void unsupported(int&&);", "unsupported Python parameter type"},
             {"function pointer", "void unsupported(int (*)(int));", "unsupported Python parameter type"},
             {"fixed array", "void unsupported(int[4]);", "unsupported Python parameter type"},
-            {"string view", "#include <string_view>\nvoid unsupported(std::string_view);", "unsupported Python parameter type"},
-            {"vector", "#include <vector>\nvoid unsupported(std::vector<int>);", "unsupported Python parameter type"},
-            {"optional", "#include <optional>\nvoid unsupported(std::optional<int>);", "unsupported Python parameter type"},
-            {"class value", "struct Object {}; void unsupported(Object);", "unsupported Python parameter type"},
-            {"union", "union Object { int i; double d; };", "complete, concrete", true},
+            {"unexported class value", "struct Object {}; void unsupported(Object);", "is not exported to Python"},
+            {"wide string", "#include <string>\nvoid unsupported(std::wstring);", "only char strings"},
+            {"union", "union Object { int i; double d; };", "unions", true},
             {"bitfield", "struct Object { unsigned field : 3; };", "unsupported Python field type", true},
             {"volatile field", "struct Object { volatile int field; };", "unsupported Python field type", true},
-            {"constructor overload", "struct Object { Object(int); Object(double); };", "constructor overloads", true},
-            {"private destructor", "class Object { ~Object(); };", "public nonthrowing destructor", true},
-            {"throwing destructor", "struct Object { ~Object() noexcept(false); };", "public nonthrowing destructor", true},
-            {"method overload", "struct Object { int unsupported(int); int unsupported(double); };", "method overloads", true},
-            {"inheritance", "struct Base {}; struct Object : Base {};", "complete, concrete", true},
-            {"abstract", "struct Object { virtual int value() = 0; };", "complete, concrete", true},
             {"template", "template<class T> T unsupported(T);", "FunctionTemplateDecl"},
-            {"callback", "#include <functional>\nvoid unsupported(std::function<int(int)>);", "unsupported Python parameter type"},
             {"immediate", "consteval int unsupported(int x) { return x; }", "consteval"},
             {"coroutine", "#include <coroutine>\nvoid unsupported(std::coroutine_handle<>);", "unsupported Python parameter type"},
-            {"variable", "inline constexpr int unsupported = 42;", "VarDecl"},
+            {"mutable global", "inline int unsupported = 42;", "mutable global variables"},
+            {"pointer result", "int* unsupported();", "unsupported Python result type"},
         };
         for (const auto& test : cases) {
             const auto module = parse(std::string(test.source) + "\nint sentinel();\n");
@@ -73,7 +61,7 @@ int main(int argc, char** argv) {
         rosetta::BindingPolicy policy; policy.classes["Object"] = {};
         const auto generated = rosetta::generate_python(module, "api", false, policy);
         require(contains(generated.source, "PyInit_api") && contains(generated.source, "PyType_FromModuleAndSpec") &&
-            contains(generated.source, "arity(args, 0, 1)"), "native module/type/defaults missing");
+            contains(generated.source, "rosetta_py::collect(args, kwargs, names, 1, 0, a, &n)"), "native module/type/defaults missing");
         require(!contains(generated.source, "\"hidden\"") && !contains(generated.source, "\"secret\""), "private members exposed");
         require(generated.source == rosetta::generate_python(module, "api", false, policy).source, "nondeterministic output");
         rejects([&] { rosetta::generate_python(module, "bad-name", false, policy); }, "module name");
@@ -83,11 +71,38 @@ int main(int argc, char** argv) {
         rejects([&] { rosetta::generate_python(module, "api", false, policy); }, "not public");
         policy.classes["Object"] = {}; policy.classes["Object"].borrow_self.insert("get");
         rejects([&] { rosetta::generate_python(module, "api", false, policy); }, "borrowed Python");
+        // Python callables are reference counted, so callback lifetime policies need no adapter.
         policy = {}; policy.callbacks["value"][1] = rosetta::CallbackLifetime::call;
-        rejects([&] { rosetta::generate_python(module, "api", true, policy); }, "callback or enum flag policies");
+        rosetta::generate_python(module, "api", true, policy);
+        // A C++ close() replaces the inherited native close().
         const auto reserved = parse("struct Object { void close(); }; ");
         policy = {}; policy.classes["Object"] = {};
-        rejects([&] { rosetta::generate_python(reserved, "api", true, policy); }, "reserved or duplicate");
+        require(contains(rosetta::generate_python(reserved, "api", false, policy).source, "native->close()"), "C++ close() not exported");
+        const auto duplicate = parse("struct Object { int count; void set(int); }; namespace a { int Object(); }");
+        policy = {}; policy.classes["Object"] = {}; policy.names = "flat";
+        rejects([&] { rosetta::generate_python(duplicate, "api", true, policy); }, "Python export name collision: Object");
+
+        // Supported families generate without diagnostics.
+        const struct { const char* label; const char* source; const char* expected; } supported[] = {
+            {"enum", "enum class Mode { a, b }; Mode flip(Mode);", "IntEnum"},
+            {"overload", "int twice(int); double twice(double);", "for (int pass = 0; pass < 2; ++pass)"},
+            {"containers", "#include <vector>\n#include <map>\n#include <optional>\n#include <string>\n"
+                "std::map<std::string, std::vector<double>> group(const std::vector<std::optional<int>>&);", "Param<const std::vector<std::optional<int>> &>"},
+            {"mutable reference", "#include <vector>\nvoid fill(std::vector<double>&);", "p0.writeback(a[0])"},
+            {"callback", "#include <functional>\nint apply(std::function<int(int)>, int);", "Param<std::function<int (int)>>"},
+            {"string view", "#include <string_view>\nint length(std::string_view);", "Param<std::basic_string_view<char>>"},
+            {"inheritance", "struct Base { virtual ~Base(); virtual int value() const = 0; }; struct Object : Base { int value() const override; };",
+                "add_base<Object, Base>"},
+            {"director", "struct Base { virtual ~Base(); virtual int value() const = 0; }; int read(const Base&);", "_director final : Base"},
+            {"operators", "struct Object { Object operator+(const Object&) const; bool operator==(const Object&) const; };", "install_slot(type, \"__add__\")"},
+            {"constant", "inline constexpr double tau = 6.28;", "\"tau\""},
+        };
+        for (const auto& test : supported) {
+            rosetta::BindingPolicy all; all.select_all = true;
+            const auto generated_case = rosetta::generate_python(parse(test.source), "api", false, all);
+            require(contains(generated_case.source, test.expected), std::string(test.label) + ": expected " + test.expected);
+            std::cout << "PASS supported " << test.label << '\n';
+        }
 
         parse("int value(int = 42);");
         const auto output = temporary.path() / "python bindings.cpp";

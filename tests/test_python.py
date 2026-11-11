@@ -1,5 +1,6 @@
 import copy
 import gc
+import math
 import importlib.util
 import pickle
 import runpy
@@ -34,7 +35,13 @@ def v(name):
 class Scalars(unittest.TestCase):
     def test_integer_types_and_ranges(self):
         self.assertEqual(v("int_bits")(), 32)
-        for name in ("char", "schar", "uchar", "short", "ushort", "int", "uint", "long", "ulong", "ll", "ull"):
+        # char is a one-character str (as in SWIG); signed/unsigned char are integers.
+        echo_char = v("echo_char")
+        self.assertEqual(echo_char("A"), "A")
+        for bad in (None, 65, "", "AB", b"A", []):
+            with self.subTest(name="char", bad=repr(bad)), self.assertRaises((TypeError, ValueError)):
+                echo_char(bad)
+        for name in ("schar", "uchar", "short", "ushort", "int", "uint", "long", "ulong", "ll", "ull"):
             echo = v("echo_" + name)
             self.assertEqual(echo(42), 42)
             for bad in (None, True, False, 1.0, "42", b"42", [], {}, 1j):
@@ -68,9 +75,10 @@ class Scalars(unittest.TestCase):
         self.assertEqual(v("echo_double")(Float(1.25)), 1.25)
         self.assertEqual(v("echo_float")(1.25), 1.25)
         self.assertEqual(v("echo_double")(sys.float_info.max), sys.float_info.max)
-        for bad in (float("inf"), -float("inf"), float("nan")):
-            with self.assertRaises(ValueError):
-                v("echo_double")(bad)
+        # IEEE special values are ordinary doubles (missing data, limits).
+        self.assertEqual(v("echo_double")(float("inf")), float("inf"))
+        self.assertEqual(v("echo_double")(-float("inf")), -float("inf"))
+        self.assertNotEqual(v("echo_double")(float("nan")), v("echo_double")(float("nan")))
         with self.assertRaises(OverflowError):
             v("echo_float")(1e39)
         self.assertIs(v("echo_bool")(True), True)
@@ -93,15 +101,17 @@ class Scalars(unittest.TestCase):
             v("echo_int")()
         with self.assertRaises(TypeError):
             v("echo_int")(1, 2)
+        self.assertEqual(v("echo_int")(value=1), 1)
         with self.assertRaises(TypeError):
-            v("echo_int")(value=1)
+            v("echo_int")(1, value=1)
+        with self.assertRaises(TypeError):
+            v("echo_int")(other=1)
         for _ in range(20):
             with self.assertRaisesRegex(RuntimeError, r"unknown C\+\+ exception"):
                 v("unknown_error")()
             with self.assertRaises(MemoryError):
                 v("allocation_error")()
-            with self.assertRaises(ValueError):
-                v("nonfinite_result")()
+            self.assertTrue(math.isnan(v("nonfinite_result")()) or math.isinf(v("nonfinite_result")()))
             self.assertEqual(v("echo_string")("still alive"), "still alive")
 
 
@@ -142,8 +152,10 @@ class Objects(unittest.TestCase):
     def test_construction_and_type_guards(self):
         with self.assertRaisesRegex(RuntimeError, "negative initial"):
             Counter(-1)
+        with Counter(value=1) as named:
+            self.assertEqual(named.value(), 1)
         with self.assertRaises(TypeError):
-            Counter(value=1)
+            Counter(count=1)
         x = Counter.__new__(Counter)
         with self.assertRaisesRegex(RuntimeError, "uninitialized"):
             x.value()
@@ -156,12 +168,14 @@ class Objects(unittest.TestCase):
                 Counter.count.__get__(other)
         with self.assertRaises(TypeError):
             Counter.__new__(Series)
-        for action in (copy.copy, copy.deepcopy, pickle.dumps):
-            with self.assertRaisesRegex(TypeError, "copied or pickled"):
-                action(x)
+        with self.assertRaisesRegex(TypeError, "cannot pickle"):
+            pickle.dumps(x)
         x.close()
-        with self.assertRaises(TypeError):
-            type("Derived", (Counter,), {})
+        # Python subclasses share the native layout and methods.
+        Derived = type("Derived", (Counter,), {"twice": lambda self: 2 * self.value()})
+        with Derived(21) as derived:
+            self.assertEqual(derived.twice(), 42)
+            self.assertIsInstance(derived, Counter)
 
     def test_type_references_and_cycles(self):
         before = sys.getrefcount(Counter)

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "select": "all",
+  "names": "flat",
+  "sequences": "vector",
+  "exceptions": [
+    { "match": "features::repeat", "map": [["std::exception", "RuntimeError"]] }
+  ],
+  "templates": { "IntStack": "features::Stack<int>" },
+  "extend": {
+    "features::Shape": { "label": "features::shape_label" },
+    "features::Circle": { "unit": "features::unit_circle" }
+  },
+  "rename": { "features::Vec2::dot": "inner" },
+  "exclude": ["features::borrowed_shape"],
+  "returns": {}
+}

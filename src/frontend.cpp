@@ -53,9 +53,93 @@ std::string enum_constant_value(const Json& node) {
     return {};
 }
 
+std::string comment_line(std::string text) {
+    if (!text.empty() && text.front() == ' ') text.erase(0, 1);
+    while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.pop_back();
+    return text;
+}
+
+// Plain text of a paragraph: one line per TextComment, inline commands keep their arguments.
+std::string comment_paragraph(const Json& node) {
+    std::string result;
+    bool fresh_line = true;
+    const auto& children = node.contains("inner") ? node.at("inner") : empty_array;
+    for (const auto& child : children) {
+        const auto kind = child.value("kind", "");
+        if (kind == "TextComment") {
+            auto text = comment_line(child.value("text", ""));
+            if (!fresh_line) result += "\n";
+            result += text;
+            fresh_line = false;
+        } else if (kind == "InlineCommandComment" && child.contains("args")) {
+            for (const auto& argument : child.at("args")) {
+                if (!result.empty() && result.back() != ' ' && result.back() != '\n') result += ' ';
+                result += argument.get<std::string>();
+            }
+        }
+    }
+    const auto begin = result.find_first_not_of(" \n");
+    if (begin == std::string::npos) return {};
+    return result.substr(begin, result.find_last_not_of(" \n") - begin + 1);
+}
+
+// Render a Clang FullComment as docstring text: paragraphs, then parameters and result.
+std::string comment_text(const Json& node) {
+    const auto& children = node.contains("inner") ? node.at("inner") : empty_array;
+    const auto full = std::find_if(children.begin(), children.end(), [](const Json& child) {
+        return child.value("kind", "") == "FullComment";
+    });
+    if (full == children.end()) return {};
+    std::vector<std::string> paragraphs, parameters;
+    std::string returns;
+    for (const auto& part : full->contains("inner") ? full->at("inner") : empty_array) {
+        const auto kind = part.value("kind", "");
+        std::string body;
+        for (const auto& paragraph : part.contains("inner") ? part.at("inner") : empty_array)
+            if (paragraph.value("kind", "") == "ParagraphComment") {
+                auto text = comment_paragraph(paragraph);
+                if (!text.empty()) body += (body.empty() ? "" : "\n") + text;
+            }
+        if (kind == "ParagraphComment") {
+            auto text = comment_paragraph(part);
+            if (!text.empty()) paragraphs.push_back(std::move(text));
+        } else if (kind == "ParamCommandComment" || kind == "TParamCommandComment") {
+            if (!body.empty()) parameters.push_back(part.value("param", "") + ": " + body);
+        } else if (kind == "BlockCommandComment") {
+            const auto name = part.value("name", "");
+            if (body.empty()) continue;
+            if (name == "return" || name == "returns" || name == "result") returns = body;
+            else if (name == "brief" || name == "details" || name == "short") paragraphs.push_back(body);
+            else paragraphs.push_back(name + ": " + body);
+        } else if (kind == "VerbatimBlockComment") {
+            std::string text;
+            for (const auto& line : part.contains("inner") ? part.at("inner") : empty_array)
+                text += (text.empty() ? "" : "\n") + line.value("text", "");
+            if (!text.empty()) paragraphs.push_back(text);
+        } else if (kind == "VerbatimLineComment") {
+            auto text = comment_line(part.value("text", ""));
+            if (!text.empty()) paragraphs.push_back(text);
+        }
+    }
+    std::string result;
+    for (const auto& paragraph : paragraphs) result += (result.empty() ? "" : "\n\n") + paragraph;
+    if (!parameters.empty()) {
+        result += (result.empty() ? "" : "\n\n") + std::string("Parameters:");
+        for (const auto& parameter : parameters) result += "\n    " + parameter;
+    }
+    if (!returns.empty()) result += (result.empty() ? "" : "\n\n") + std::string("Returns: ") + returns;
+    return result;
+}
+
+bool has_attribute(const Json& node, const char* kind) {
+    const auto& children = node.contains("inner") ? node.at("inner") : empty_array;
+    return std::any_of(children.begin(), children.end(), [&](const Json& child) { return child.value("kind", "") == kind; });
+}
+
 class AstReader {
 public:
-    explicit AstReader(std::string header) {
+    AstReader(std::string header, std::vector<std::string> scopes, std::vector<std::string> instantiations)
+        : scopes_(std::move(scopes)), instantiations_(std::move(instantiations)) {
         module_.header = std::move(header);
         const auto text = detail::read_file(module_.header);
         line_starts_.push_back(0);
@@ -79,12 +163,68 @@ public:
                         function.unsupported_reason = "default calls with member template overloads require an explicit adapter";
             }
         }
+        for (const auto& requested : instantiations_)
+            if (!instantiated_.count(requested))
+                module_.diagnostics.push_back(requested + ": requested template instantiation was not found");
+        inherit_virtuals();
         return std::move(module_);
     }
 
 private:
     Module module_;
+    std::vector<std::string> scopes_;
+    std::vector<std::string> instantiations_;
+    std::set<std::string> instantiated_;
+    std::map<std::string, bool> owned_files_;
     std::string current_file_;
+
+    // Exported files: the header itself, listed files, and files below listed directories.
+    bool owns(const std::string& file) {
+        if (file == module_.header) return true;
+        const auto cached = owned_files_.find(file);
+        if (cached != owned_files_.end()) return cached->second;
+        bool result = false;
+        for (const auto& scope : scopes_) {
+            if (file == scope) { result = true; break; }
+            auto prefix = scope;
+            if (!prefix.empty() && prefix.back() != '/') prefix += '/';
+            if (file.compare(0, prefix.size(), prefix) == 0) { result = true; break; }
+        }
+        owned_files_.emplace(file, result);
+        return result;
+    }
+
+    // Overrides without `virtual` are still virtual; destructors inherit virtuality too.
+    void inherit_virtuals() {
+        std::map<std::string, std::size_t> index;
+        for (std::size_t i = 0; i < module_.records.size(); ++i) index.emplace(module_.records[i].qualified_name(), i);
+        std::set<std::size_t> done, active;
+        const auto visit = [&](const auto& self, std::size_t i) -> void {
+            if (done.count(i) || !active.insert(i).second) return;
+            auto& record = module_.records[i];
+            for (const auto& base : record.bases) {
+                const auto found = index.find(base.type.declaration.empty() ? base.type.canonical : base.type.declaration);
+                if (found == index.end()) continue;
+                self(self, found->second);
+                const auto& parent = module_.records[found->second];
+                if (parent.virtual_destructor) record.virtual_destructor = true;
+                for (auto& method : record.methods) {
+                    if (method.is_virtual || method.is_static) continue;
+                    for (const auto& candidate : parent.methods) {
+                        if (!candidate.is_virtual || candidate.name != method.name || candidate.is_const != method.is_const ||
+                            candidate.parameters.size() != method.parameters.size()) continue;
+                        bool same = true;
+                        for (std::size_t p = 0; p < method.parameters.size() && same; ++p)
+                            same = candidate.parameters[p].canonical == method.parameters[p].canonical;
+                        if (same) { method.is_virtual = true; break; }
+                    }
+                }
+            }
+            active.erase(i);
+            done.insert(i);
+        };
+        for (std::size_t i = 0; i < module_.records.size(); ++i) visit(visit, i);
+    }
     struct Alias { std::string target; std::vector<std::string> namespaces; };
     std::map<std::string, Alias> aliases_;
     std::map<std::string, std::size_t> enum_indices_;
@@ -361,6 +501,13 @@ private:
                 type.canonical += type.arguments[i].canonical;
             }
             type.canonical += ">";
+            const auto specialization = record_type_names_.find(type.canonical);
+            if (specialization != record_type_names_.end()) {
+                type.canonical = specialization->second;
+                type.kind = TypeKind::record;
+                type.declaration = specialization->second;
+                type.arguments.clear();
+            }
         } else {
             type.canonical = name;
             if (builtins.count(name)) type.kind = TypeKind::builtin;
@@ -386,6 +533,9 @@ private:
         result.is_constructor = node.value("kind", "") == "CXXConstructorDecl";
         result.is_static = node.value("storageClass", "") == "static";
         result.is_deleted = node.value("explicitlyDeleted", false);
+        result.is_virtual = node.value("virtual", false) || has_attribute(node, "OverrideAttr") || has_attribute(node, "FinalAttr");
+        result.is_pure = node.value("pure", false);
+        result.doc = comment_text(node);
         const auto signature = node.at("type").at("qualType").get<std::string>();
         if (result.is_deleted) result.unsupported_reason = "deleted functions are unsupported";
         if (node.value("immediate", false)) result.unsupported_reason = "consteval functions require a constant-expression facade";
@@ -430,6 +580,7 @@ private:
         }
         enumeration.selected = own;
         enumeration.location = source;
+        enumeration.doc = comment_text(node);
         const auto& children = node.contains("inner") ? node.at("inner") : empty_array;
         for (const auto& child : children) {
             if (child.value("kind", "") != "EnumConstantDecl") continue;
@@ -452,11 +603,21 @@ private:
     }
 
     void read_record(const Json& node, const std::vector<std::string>& namespaces, const SourceLocation& source,
-                     bool own, const std::string& parent_owner = {}, bool accessible = true) {
+                     bool own, const std::string& parent_owner = {}, bool accessible = true, const std::string& name_override = {}) {
         struct DepthScope { unsigned& depth; ~DepthScope() { --depth; } } depth_scope{record_depth_};
         const bool outermost = record_depth_++ == 0;
         Record record;
-        record.name = node.at("name").get<std::string>();
+        record.name = name_override.empty() ? node.at("name").get<std::string>() : name_override;
+        record.doc = comment_text(node);
+        record.polymorphic = node.value("definitionData", empty_object).value("isPolymorphic", false);
+        record.is_final = has_attribute(node, "FinalAttr");
+        if (node.contains("bases"))
+            for (const auto& base : node.at("bases")) {
+                const auto& type = base.at("type");
+                const auto spelling = type.value("qualType", "");
+                record.bases.push_back({{spelling, type.value("desugaredQualType", spelling)},
+                                        base.value("access", "public"), base.value("isVirtual", false)});
+            }
         record.namespaces = namespaces;
         record.owner = parent_owner;
         record.complete = node.value("completeDefinition", false);
@@ -468,6 +629,12 @@ private:
         type_ids_[node.at("id").get<std::string>()] = owner;
         if (accessible)
             for (const auto& visible : visible_names(namespaces, record.name)) record_type_names_[visible] = owner;
+        if (!name_override.empty()) {
+            // Member signatures spell the specialization through its primary template.
+            Type canonical{owner, owner};
+            resolve(canonical, {});
+            record_type_names_[canonical.canonical] = owner;
+        }
         auto scope = namespaces;
         scope.push_back(record.name);
         declaration_contexts_[node.at("id").get<std::string>()] = {namespaces, parent_owner, accessible};
@@ -504,12 +671,28 @@ private:
                     const auto signature = child.at("type").at("qualType").get<std::string>();
                     record.public_destructor = access == "public" && !child.value("explicitlyDeleted", false) &&
                         signature.find("noexcept(false)") == std::string::npos;
+                    if (child.value("virtual", false) || has_attribute(child, "OverrideAttr")) record.virtual_destructor = true;
                 }
                 if (kind == "FieldDecl") {
                     const auto& type = child.at("type");
                     const auto spelling = type.at("qualType").get<std::string>();
                     record.fields.push_back({child.value("name", "<anonymous>"),
-                        {spelling, type.value("desugaredQualType", spelling)}, access, child.value("isBitfield", false), child_location});
+                        {spelling, type.value("desugaredQualType", spelling)}, access, child.value("isBitfield", false), child_location,
+                        comment_text(child)});
+                }
+                if (kind == "VarDecl" && child.contains("name") && child.value("storageClass", "") == "static") {
+                    const auto& type = child.at("type");
+                    const auto spelling = type.at("qualType").get<std::string>();
+                    Variable variable;
+                    variable.name = child.at("name").get<std::string>();
+                    variable.namespaces = scope;
+                    variable.type = {spelling, type.value("desugaredQualType", spelling)};
+                    variable.owner = owner;
+                    variable.access = access;
+                    variable.is_constexpr = child.value("constexpr", false);
+                    variable.location = child_location;
+                    variable.doc = comment_text(child);
+                    record.static_fields.push_back(std::move(variable));
                 }
             }
             advance_locations(child.contains("inner") ? child.at("inner") : empty_array);
@@ -554,8 +737,63 @@ private:
                         for (auto& parameter : function.parameters) resolve(parameter, context);
                     }
                 for (auto& field : pending.fields) resolve(field.type, context);
+                for (auto& variable : pending.static_fields) resolve(variable.type, context);
+                for (auto& base : pending.bases) resolve(base.type, pending.namespaces);
             }
             pending_records_.clear();
+        }
+    }
+
+    // Export an explicitly requested specialization under its requested C++ spelling.
+    void read_specialization(const Json& node, std::vector<std::string> namespaces, const SourceLocation& source) {
+        const auto parent = namespace_ids_.find(node.value("parentDeclContextId", ""));
+        if (parent != namespace_ids_.end()) {
+            namespaces.clear();
+            for (std::size_t start = 0;;) {
+                const auto next = parent->second.find("::", start);
+                namespaces.push_back(parent->second.substr(start, next - start));
+                if (next == std::string::npos) break;
+                start = next + 2;
+            }
+        }
+        std::string arguments;
+        for (const auto& child : node.at("inner")) {
+            if (child.value("kind", "") != "TemplateArgument") continue;
+            std::string argument;
+            if (child.contains("type")) argument = child.at("type").value("desugaredQualType", child.at("type").value("qualType", ""));
+            else if (child.contains("value")) argument = child.at("value").is_string() ? child.at("value").get<std::string>() : child.at("value").dump();
+            else return;
+            arguments += (arguments.empty() ? "" : ", ") + argument;
+        }
+        Type actual{qualify(namespaces, node.at("name").get<std::string>()) + "<" + arguments + ">", {}};
+        actual.canonical = actual.spelling;
+        resolve(actual, {});
+        for (const auto& requested : instantiations_) {
+            if (instantiated_.count(requested)) continue;
+            Type wanted{requested, requested};
+            resolve(wanted, {});
+            if (wanted.canonical != actual.canonical) continue;
+            const auto open = requested.find('<');
+            auto separator = requested.rfind("::", open);
+            auto scope = namespaces;
+            auto name = requested;
+            if (separator != std::string::npos) {
+                scope.clear();
+                std::string path = requested.substr(0, separator);
+                if (path.rfind("::", 0) == 0) path.erase(0, 2);
+                for (std::size_t start = 0;;) {
+                    const auto next = path.find("::", start);
+                    scope.push_back(path.substr(start, next - start));
+                    if (next == std::string::npos) break;
+                    start = next + 2;
+                }
+                name = requested.substr(separator + 2);
+            }
+            instantiated_.insert(requested);
+            read_record(node, scope, source, true, {}, true, name);
+            auto& record = module_.records[record_indices_.at(qualify(scope, name))];
+            record.template_name = qualify(namespaces, node.at("name").get<std::string>());
+            return;
         }
     }
 
@@ -563,7 +801,7 @@ private:
         const auto& raw_loc = node.contains("loc") ? node.at("loc") : empty_object;
         advance_locations(raw_loc);
         const auto& loc = raw_loc.contains("expansionLoc") ? raw_loc.at("expansionLoc") : raw_loc;
-        const bool own = current_file_ == module_.header && loc.contains("offset");
+        const bool own = owns(current_file_) && loc.contains("offset");
         const auto source_location = loc.contains("offset") ? location(loc) : SourceLocation{};
         advance_locations(node.contains("range") ? node.at("range") : empty_object);
         const auto kind = node.value("kind", "");
@@ -624,6 +862,10 @@ private:
             read_record(node, namespaces, source_location, own, owner, accessible);
             return;
         }
+        if (kind == "ClassTemplateSpecializationDecl" && !instantiations_.empty() && node.contains("inner") && !anonymous) {
+            read_specialization(node, namespaces, source_location);
+            return;
+        }
         advance_locations(children);
         if (parent != record_contexts_.end() && (kind == "CXXConstructorDecl" || kind == "CXXMethodDecl" ||
             kind == "CXXConversionDecl" || kind == "CXXDestructorDecl")) {
@@ -670,8 +912,21 @@ private:
         const auto label = qualify(namespaces, name);
         const auto reject = [&](const std::string& reason) { module_.diagnostics.push_back(label + ": " + reason); };
         static const std::set<std::string> ignored = {"TypedefDecl", "TypeAliasDecl", "EmptyDecl",
-            "UsingDirectiveDecl", "UsingDecl", "UsingShadowDecl", "StaticAssertDecl"};
+            "UsingDirectiveDecl", "UsingDecl", "UsingShadowDecl", "StaticAssertDecl", "FullComment"};
         if (ignored.count(kind)) return;
+        if (kind == "VarDecl" && !anonymous && node.contains("name") && node.value("storageClass", "") != "static") {
+            const auto& type = node.at("type");
+            const auto spelling = type.at("qualType").get<std::string>();
+            Variable variable;
+            variable.name = name;
+            variable.namespaces = namespaces;
+            variable.type = {spelling, type.value("desugaredQualType", spelling)};
+            variable.is_constexpr = node.value("constexpr", false);
+            variable.location = source_location;
+            variable.doc = comment_text(node);
+            resolve(variable.type, namespaces);
+            module_.variables.push_back(std::move(variable));
+        }
         if (kind != "FunctionDecl") {
             if (kind == "FunctionTemplateDecl") overloaded_default_names_.insert(label);
             reject("unsupported declaration " + kind); return;
@@ -694,7 +949,8 @@ private:
 } // namespace
 
 Module parse(const std::filesystem::path& input, const std::string& clang,
-             const std::vector<std::string>& flags, const std::filesystem::path& directory, bool collect_dependencies) {
+             const std::vector<std::string>& flags, const std::filesystem::path& directory, bool collect_dependencies,
+             const ParseOptions& options) {
     const auto header = std::filesystem::canonical(input);
     if (directory.string().find('\0') != std::string::npos) throw BindingError("compiler working directory cannot contain NUL bytes");
     const auto working_directory = std::filesystem::canonical(directory.empty() ? std::filesystem::current_path() : directory);
@@ -711,15 +967,42 @@ Module parse(const std::filesystem::path& input, const std::string& clang,
         dependency_file = dependency_directory->path() / "compiler.d";
         command.insert(command.end(), {"-MD", "-MF", dependency_file.string(), "-MT", "rosetta-dependencies"});
     }
+    // Requested specializations are instantiated (declarations only) after the header.
+    std::unique_ptr<detail::TemporaryDirectory> unit_directory;
+    auto unit = header;
+    if (!options.instantiations.empty()) {
+        unit_directory = std::make_unique<detail::TemporaryDirectory>();
+        unit = unit_directory->path() / "rosetta_instantiations.hpp";
+        std::string text = "#include \"" + header.string() + "\"\n";
+        for (const auto& requested : options.instantiations) {
+            if (requested.find_first_of(";{}\n") != std::string::npos) throw BindingError("invalid template instantiation: " + requested);
+            text += "extern template class " + requested + ";\n";
+        }
+        detail::write_file(unit, text);
+    }
+    std::vector<std::string> scopes;
+    for (const auto& scope : options.scopes) {
+        std::error_code error;
+        const auto canonical = std::filesystem::canonical(scope, error);
+        if (error) throw BindingError("binding scope does not exist: " + scope.string());
+        scopes.push_back(canonical.string());
+    }
     command.insert(command.end(), {"-x", "c++", "-fsyntax-only", "-Wno-unused-command-line-argument",
-        "-Wno-pragma-once-outside-header", "-Xclang", "-ast-dump=json", header.string()});
+        "-Wno-pragma-once-outside-header", "-Wno-mismatched-tags"});
+    if (options.skip_function_bodies) command.insert(command.end(), {"-Xclang", "-skip-function-bodies"});
+    command.insert(command.end(), {"-Xclang", "-ast-dump=json", unit.string()});
     const auto process = detail::run_process(command, working_directory);
     if (process.exit_code != 0)
         throw BindingError("Clang rejected " + header.string() + " (" + clang + "):\n" + process.error);
     try {
         const auto root = Json::parse(process.output);
-        auto module = AstReader(header.string()).read(root);
-        if (collect_dependencies) module.dependencies = detail::compiler_dependencies(detail::read_file(dependency_file), dependency_base);
+        auto module = AstReader(header.string(), std::move(scopes), options.instantiations).read(root);
+        if (collect_dependencies) {
+            module.dependencies = detail::compiler_dependencies(detail::read_file(dependency_file), dependency_base);
+            if (unit != header)
+                module.dependencies.erase(std::remove(module.dependencies.begin(), module.dependencies.end(), unit.string()),
+                                          module.dependencies.end());
+        }
         module.parse_context = {compiler, working_directory.string(), flags, {}, {}, 0};
         return module;
     } catch (const Json::exception& error) {

@@ -69,7 +69,9 @@
           );
         # GNU APL native functions compile against the interpreter's own
         # headers: nixpkgs' GNU APL source, configured as nixpkgs builds it.
-        gnuAplHeaders = pkgs.runCommand "gnu-apl-${pkgs.gnuapl.version}-headers" { } ''
+        gnuAplHeaders = pkgs.runCommandCC "gnu-apl-${pkgs.gnuapl.version}-headers" {
+          inherit (pkgs.gnuapl) buildInputs;
+        } ''
           tar xzf ${pkgs.gnuapl.src}
           cd apl-${pkgs.gnuapl.version}
           ./configure > /dev/null
@@ -80,13 +82,13 @@
         # nixpkgs marks GNU APL broken on macOS. There, shells use the apl on
         # PATH (for example Homebrew's) and ROSETTA_GNU_APL_SOURCE_DIR from the
         # environment: its source tree, configured with ./configure.
-        gnuApl = lib.optionals pkgs.stdenv.isLinux [ pkgs.gnuapl ];
-        gnuAplHook = lib.optionalString pkgs.stdenv.isLinux ''
+        gnuApl = lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.gnuapl ];
+        gnuAplHook = lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
           export ROSETTA_GNU_APL_SOURCE_DIR=${gnuAplHeaders}
         '';
         # nixpkgs has no prebuilt GnuCOBOL for macOS, so shells there use the
         # cobc on PATH (for example Homebrew's) instead of building it.
-        gnuCobol = lib.optionals pkgs.stdenv.isLinux [ pkgs.gnucobol ];
+        gnuCobol = lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.gnucobol ];
         chunkShell =
           {
             name,
@@ -200,7 +202,7 @@
           trap 'rm -rf "$dir"' EXIT
           cobc -x -free -fstatic-call -I "$ROSETTA_README_BUILD/cobol" -o "$dir/program" "$1" \
             -L "$ROSETTA_README_BUILD/cobol" -lcobol_demo -lcobol_verify \
-            ${if pkgs.stdenv.isDarwin then "-Q -lc++" else "-Q -lstdc++ -Q -lm"} 2> "$dir/log" || { cat "$dir/log" >&2; exit 1; }
+            ${if pkgs.stdenv.hostPlatform.isDarwin then "-Q -lc++" else "-Q -lstdc++ -Q -lm"} 2> "$dir/log" || { cat "$dir/log" >&2; exit 1; }
           "$dir/program"
         '';
         # Julia loads config/startup.jl from the first depot in JULIA_DEPOT_PATH.
@@ -261,8 +263,31 @@
         ]
         ++ gnuApl
         ++ gnuCobol;
+        # The generator CLI. Clang parses headers at generation time, so the
+        # wrapper puts the clang++ it was built with after the caller's PATH.
+        rosetta = pkgs.stdenv.mkDerivation {
+          pname = "rosetta";
+          version = "0.1.0";
+          src = lib.cleanSourceWith {
+            src = ./.;
+            filter = path: type: !(lib.hasInfix "/build" path) && !(lib.hasInfix "/.cache" path);
+          };
+          nativeBuildInputs = [ pkgs.cmake pkgs.ninja pkgs.clang pkgs.makeWrapper ];
+          buildInputs = [ pkgs.nlohmann_json ];
+          cmakeFlags = [
+            "-DBUILD_TESTING=OFF"
+            "-DROSETTA_BUILD_EXAMPLES=OFF"
+            "-DROSETTA_BUILD_MODULE_EXAMPLE=OFF"
+          ];
+          postFixup = ''
+            wrapProgram $out/bin/rosetta --suffix PATH : ${lib.makeBinPath [ pkgs.clang ]}
+          '';
+          meta.mainProgram = "rosetta";
+        };
       in
       {
+        packages.default = rosetta;
+        packages.rosetta = rosetta;
         devShells.default = pkgs.mkShell {
           packages = developmentPackages;
           shellHook = fortranHook + lispHook + gnuAplHook;

@@ -46,6 +46,11 @@ struct Function {
     bool is_const = false;
     bool is_deleted = false;
     bool is_noexcept = false;
+    // Virtual by declaration, override/final attribute, or inheritance from a virtual base method.
+    bool is_virtual = false;
+    bool is_pure = false;
+    // Plain text of the attached documentation comment, empty without one.
+    std::string doc{};
     // Number of trailing parameters whose defaults are visible at the header entry point.
     std::size_t default_arguments = 0;
     // Declared parameter names, empty where unnamed; parallel to parameters.
@@ -61,6 +66,29 @@ struct Field {
     std::string access = "public";
     bool bitfield = false;
     SourceLocation location{};
+    std::string doc{};
+};
+
+// Namespace-scope or static member variables. Constant initializers stay in C++:
+// generated code reads the variable itself.
+struct Variable {
+    std::string name;
+    std::vector<std::string> namespaces;
+    Type type;
+    std::string owner{};
+    std::string access = "public";
+    bool is_constexpr = false;
+    SourceLocation location{};
+    std::string doc{};
+
+    std::string qualified_name() const;
+};
+
+struct BaseClass {
+    // Resolved declaration (qualified record name) or the written spelling when unresolved.
+    Type type;
+    std::string access = "public";
+    bool is_virtual = false;
 };
 
 struct Record {
@@ -76,6 +104,14 @@ struct Record {
     bool has_bases = false;
     std::string unsupported_reason{};
     std::string owner{};
+    std::vector<BaseClass> bases{};
+    std::vector<Variable> static_fields{};
+    bool polymorphic = false;
+    bool virtual_destructor = false;
+    bool is_final = false;
+    // Primary template of an explicitly requested specialization, empty otherwise.
+    std::string template_name{};
+    std::string doc{};
 
     std::string qualified_name() const;
 };
@@ -92,6 +128,7 @@ struct Enumeration {
     // Decimal compiler-evaluated values, parallel to enumerators (no host-width loss).
     std::vector<std::string> enumerator_values{};
     std::string underlying_type{};
+    std::string doc{};
 
     std::string qualified_name() const;
 };
@@ -111,6 +148,7 @@ struct Module {
     std::vector<std::string> diagnostics;
     std::vector<Enumeration> enumerations;
     std::vector<Record> records;
+    std::vector<Variable> variables{};
     ParseContext parse_context;
     // Compiler-discovered regular-file inputs, collected on explicit request.
     std::vector<std::string> dependencies;
