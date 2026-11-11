@@ -111,9 +111,13 @@ std::string serialize_ir(const Module& module) {
     }
     auto variables = Json::array();
     for (const auto& v : module.variables) variables.push_back(variable_json(v));
+    auto reexports = Json::array();
+    for (const auto& r : module.reexports)
+        reexports.push_back({{"namespaces", r.namespaces}, {"name", r.name}, {"target", r.target}, {"kind", r.kind},
+                             {"location", location_json(r.location)}});
     const auto& context = module.parse_context;
     return Json{{"header", module.header}, {"functions", functions}, {"diagnostics", module.diagnostics},
-                {"enumerations", enumerations}, {"records", records}, {"variables", variables}, {"dependencies", module.dependencies},
+                {"enumerations", enumerations}, {"records", records}, {"variables", variables}, {"reexports", reexports}, {"dependencies", module.dependencies},
                 {"parse_context", {{"compiler", context.compiler}, {"directory", context.directory}, {"flags", context.flags},
                     {"compilation_database", context.compilation_database}, {"translation_unit", context.translation_unit},
                     {"command_index", context.compilation_database.empty() ? Json(nullptr) : Json(context.command_index)}}}}.dump(2) + "\n";

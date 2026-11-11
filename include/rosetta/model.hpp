@@ -55,6 +55,8 @@ struct Function {
     std::size_t default_arguments = 0;
     // Declared parameter names, empty where unnamed; parallel to parameters.
     std::vector<std::string> parameter_names{};
+    // Primary template of a requested function template specialization (name is then f<args>).
+    std::string template_name{};
 
     std::string qualified_name() const;
     std::string identity() const;
@@ -142,6 +144,16 @@ struct ParseContext {
     std::size_t command_index = 0;
 };
 
+// A using-declaration in a selected header that makes an entity visible in another namespace
+// (namespace short { using long_name::Thing; }): bindings may expose it under that name too.
+struct Reexport {
+    std::vector<std::string> namespaces; // where the using-declaration appears
+    std::string name;
+    std::string target;                  // qualified name of the entity
+    std::string kind;                    // "record", "enum", "function" or "type" (an alias of a record or enum)
+    SourceLocation location{};
+};
+
 struct Module {
     std::string header;
     std::vector<Function> functions;
@@ -149,6 +161,7 @@ struct Module {
     std::vector<Enumeration> enumerations;
     std::vector<Record> records;
     std::vector<Variable> variables{};
+    std::vector<Reexport> reexports{};
     ParseContext parse_context;
     // Compiler-discovered regular-file inputs, collected on explicit request.
     std::vector<std::string> dependencies;

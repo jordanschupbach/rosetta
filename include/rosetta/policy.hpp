@@ -42,6 +42,9 @@ struct BindingPolicy {
     std::map<std::string, std::map<std::string, std::string>> extend;
     // Function or method to result ownership: owned (caller deletes), copy or borrowed.
     std::map<std::string, std::string> returns;
+    // Classes whose references (method results and fields) are returned as copies, for
+    // value-like types where a live reference into the owner would surprise callers.
+    std::set<std::string> copy_types;
     // Fields, variables or classes (patterns) exported without setters.
     std::vector<std::string> readonly;
     // Documentation overrides keyed by qualified name.
@@ -50,6 +53,8 @@ struct BindingPolicy {
     std::map<std::string, std::string> conversions;
     // "qualified" (default) exports ns__name; "flat" exports unqualified names.
     std::string names = "qualified";
+    // Namespace patterns whose members keep qualified (ns__name) names under "flat" naming.
+    std::vector<std::string> qualify;
     // "list" (default) or "tuple" for sequence results.
     std::string sequences = "list";
     // Ordered (pattern, [(C++ exception, Python exception)]) rules: the first rule whose

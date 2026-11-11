@@ -34,7 +34,15 @@ if(ROSETTA_BUILD_R_EXAMPLES)
     target_compile_options(rosetta_r_verify PRIVATE ${r_cppflags})
     target_link_libraries(rosetta_r_verify PRIVATE "${ROSETTA_R_LIBRARY}" Threads::Threads)
     set_target_properties(rosetta_r_verify PROPERTIES PREFIX "" OUTPUT_NAME r_verify)
-    set(functional_interfaces)
+    # The R6 backend on the library-shaped example shared with the Python backend.
+    rosetta_generate_r(HEADER "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.hpp"
+        MODULE r_features OBJECT_SYSTEM r6 OUTPUT "${r_generated}/r_features.cpp" R_OUTPUT "${r_generated}/r_features.R" PARTS 3
+        CLANG "${ROSETTA_CLANG_EXECUTABLE}" POLICY "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.policy.json")
+    add_library(rosetta_r_features MODULE "${r_generated}/r_features.cpp" "${r_generated}/r_features_1.cpp" "${r_generated}/r_features_2.cpp")
+    target_compile_features(rosetta_r_features PRIVATE cxx_std_17)
+    target_compile_options(rosetta_r_features PRIVATE ${r_cppflags})
+    target_link_libraries(rosetta_r_features PRIVATE "${ROSETTA_R_LIBRARY}")
+    set_target_properties(rosetta_r_features PROPERTIES PREFIX "" OUTPUT_NAME r_features)
     foreach(system s3 s4)
         foreach(example demo verify)
             if(example STREQUAL "demo")
@@ -46,13 +54,22 @@ if(ROSETTA_BUILD_R_EXAMPLES)
                 MODULE r_${example} OBJECT_SYSTEM ${system}
                 OUTPUT "${r_generated}/${system}/r_${example}.cpp" R_OUTPUT "${r_generated}/${system}/r_${example}.R"
                 CLANG "${ROSETTA_CLANG_EXECUTABLE}" POLICY "${CMAKE_CURRENT_SOURCE_DIR}/examples/${header}.policy.json")
-            list(APPEND functional_interfaces "${r_generated}/${system}/r_${example}.cpp" "${r_generated}/${system}/r_${example}.R")
+            # S3 and S4 share one bridge design, distinct from R6's; each system gets its own library.
+            set(target rosetta_r_${example}_${system})
+            if(example STREQUAL "demo")
+                add_library(${target} MODULE "${r_generated}/${system}/r_${example}.cpp")
+                target_compile_features(${target} PRIVATE cxx_std_17)
+            else()
+                add_library(${target} MODULE "${r_generated}/${system}/r_${example}.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/examples/r_verification.cpp")
+                target_compile_features(${target} PRIVATE cxx_std_20)
+                target_link_libraries(${target} PRIVATE Threads::Threads)
+            endif()
+            target_compile_options(${target} PRIVATE ${r_cppflags})
+            target_link_libraries(${target} PRIVATE "${ROSETTA_R_LIBRARY}")
+            set_target_properties(${target} PROPERTIES PREFIX "" OUTPUT_NAME r_${example}
+                LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/r-${system}")
         endforeach()
     endforeach()
-    # Interface-only generation reuses the identical, already compiled bridges.
-    add_custom_target(rosetta_r_interfaces DEPENDS ${functional_interfaces})
-    add_dependencies(rosetta_r_demo rosetta_r_interfaces)
-    add_dependencies(rosetta_r_verify rosetta_r_interfaces)
     add_custom_target(r-repl
         COMMAND "${CMAKE_COMMAND}" -E env
             "R_PROFILE_USER=${CMAKE_CURRENT_SOURCE_DIR}/examples/repl.R"
@@ -60,7 +77,6 @@ if(ROSETTA_BUILD_R_EXAMPLES)
             "ROSETTA_R_INTERFACE=${r_generated}/r_demo.R"
             "ROSETTA_R_VERIFY_MODULE=$<TARGET_FILE:rosetta_r_verify>"
             "ROSETTA_R_VERIFY_INTERFACE=${r_generated}/r_verify.R"
-            "ROSETTA_R_INTERFACES=${r_generated}"
             "${ROSETTA_R_EXECUTABLE}" --no-save --no-restore --no-site-file --no-environ
         DEPENDS rosetta_r_demo rosetta_r_verify
         USES_TERMINAL VERBATIM)
@@ -73,18 +89,21 @@ if(ROSETTA_BUILD_R_EXAMPLES)
                 "${r_generated}/r_verify.R" "${CMAKE_CURRENT_SOURCE_DIR}/tests/r_helpers.R")
         endforeach()
         set_tests_properties(r_features PROPERTIES TIMEOUT 20)
+        add_test(NAME r6_features COMMAND "${ROSETTA_RSCRIPT_EXECUTABLE}" --vanilla
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_r6_features.R" "$<TARGET_FILE:rosetta_r_features>" "${r_generated}/r_features.R")
+        set_tests_properties(r6_features PROPERTIES TIMEOUT 60)
         foreach(system s3 s4)
             add_test(NAME r_${system}_scalars COMMAND "${ROSETTA_RSCRIPT_EXECUTABLE}" --vanilla
-                "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_r_scalars.R" "$<TARGET_FILE:rosetta_r_verify>"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_r_scalars.R" "$<TARGET_FILE:rosetta_r_verify_${system}>"
                 "${r_generated}/${system}/r_verify.R" "${CMAKE_CURRENT_SOURCE_DIR}/tests/r_helpers.R")
             add_test(NAME r_${system}_classes COMMAND "${ROSETTA_RSCRIPT_EXECUTABLE}" --vanilla
                 "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_r_object_systems.R"
-                "$<TARGET_FILE:rosetta_r_demo>" "${r_generated}/${system}/r_demo.R"
-                "$<TARGET_FILE:rosetta_r_verify>" "${r_generated}/${system}/r_verify.R" "${system}")
+                "$<TARGET_FILE:rosetta_r_demo_${system}>" "${r_generated}/${system}/r_demo.R"
+                "$<TARGET_FILE:rosetta_r_verify_${system}>" "${r_generated}/${system}/r_verify.R" "${system}")
             set_tests_properties(r_${system}_classes PROPERTIES TIMEOUT 20)
         endforeach()
         add_test(NAME r_repl_startup COMMAND "${ROSETTA_RSCRIPT_EXECUTABLE}" --vanilla
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_r_repl.R" "$<TARGET_FILE:rosetta_r_demo>" "${r_generated}/r_demo.R"
-            "${CMAKE_CURRENT_SOURCE_DIR}/examples/repl.R" "$<TARGET_FILE:rosetta_r_verify>" "${r_generated}/r_verify.R" "${r_generated}")
+            "${CMAKE_CURRENT_SOURCE_DIR}/examples/repl.R" "$<TARGET_FILE:rosetta_r_verify>" "${r_generated}/r_verify.R")
     endif()
 endif()

@@ -1,0 +1,1193 @@
+#pragma once
+
+// Runtime for the R6 backend: emitted (as text) into every generated source, inside the
+// module's namespace ROSETTA_R_MODULE so that split sources of one module share it.
+namespace rosetta::detail {
+inline constexpr const char* r6_runtime_parts[] = {
+R"cpp(
+namespace ROSETTA_R_MODULE { namespace rosetta_r {
+// ---------------------------------------------------------------- errors
+// An R condition is unwinding through C++: rethrown as R_ContinueUnwind at the boundary.
+struct r_unwind { SEXP token; };
+[[noreturn]] inline void fail(const std::string& message) { throw std::runtime_error(message); }
+
+// PROTECT scoped to a C++ block, so that C++ exceptions keep R's protection stack balanced.
+class Protect {
+public:
+    explicit Protect(SEXP value) : value_(value) { PROTECT(value_); }
+    ~Protect() { UNPROTECT(1); }
+    Protect(const Protect&) = delete;
+    Protect& operator=(const Protect&) = delete;
+    SEXP get() const { return value_; }
+private:
+    SEXP value_;
+};
+
+// Evaluates R code; an R error unwinds the C++ frames (as r_unwind) before R continues it.
+inline SEXP eval(SEXP call, SEXP env) {
+    SEXP token = R_MakeUnwindCont();
+    R_PreserveObject(token);
+    struct Data { SEXP call, env; } data{call, env};
+    std::jmp_buf jump;
+    if (setjmp(jump)) throw r_unwind{token};
+    SEXP result = R_UnwindProtect([](void* p) -> SEXP { auto* d = static_cast<Data*>(p); return Rf_eval(d->call, d->env); },
+        &data, [](void* j, Rboolean jumping) { if (jumping) std::longjmp(*static_cast<std::jmp_buf*>(j), 1); }, &jump, token);
+    R_ReleaseObject(token);
+    return result;
+}
+
+// A variable in one environment frame (forcing promises), or nullptr when unbound.
+inline SEXP frame_variable(SEXP env, SEXP symbol) {
+#if defined(R_VERSION) && R_VERSION >= R_Version(4, 5, 0)
+    return R_getVarEx(symbol, env, FALSE, nullptr);
+#else
+    SEXP value = Rf_findVarInFrame3(env, symbol, TRUE);
+    if (value == R_UnboundValue) return nullptr;
+    if (TYPEOF(value) == PROMSXP) value = Rf_eval(value, env);
+    return value;
+#endif
+}
+
+inline std::string& error_text() { static std::string value; return value; }
+// Every .Call entry runs here: C++ exceptions become R errors after native frames unwind.
+// The argument being converted ("argument 'seed'"), named in conversion errors; null outside conversions.
+inline const char*& converting() { static const char* label = nullptr; return label; }
+template<class F> SEXP boundary(F&& fn) {
+    SEXP token = nullptr;
+    bool failed = false;
+    SEXP result = R_NilValue;
+    const char* outer = converting();
+    converting() = nullptr;
+    try { result = fn(); }
+    catch (const r_unwind& unwind) { token = unwind.token; }
+    catch (const std::exception& error) {
+        failed = true;
+        error_text() = converting() ? std::string(converting()) + ": " + error.what() : error.what();
+    }
+    catch (...) { failed = true; error_text() = "unknown C++ exception"; }
+    converting() = outer;
+    if (token) { R_ReleaseObject(token); R_ContinueUnwind(token); }
+    if (failed) Rf_error("%s", error_text().c_str());
+    return result;
+}
+
+inline std::string type_name(SEXP value) {
+    if (Rf_isNull(value)) return "NULL";
+    SEXP klass = Rf_getAttrib(value, R_ClassSymbol);
+    if (TYPEOF(klass) == STRSXP && XLENGTH(klass) > 0) return CHAR(STRING_ELT(klass, 0));
+    return Rf_type2char(TYPEOF(value));
+}
+
+// ---------------------------------------------------------------- classes
+struct TypeInfo;
+struct BaseLink { TypeInfo* base; void* (*upcast)(void*); };
+struct TypeInfo {
+    const char* name = nullptr;      // R class name
+    std::vector<BaseLink> bases;
+    void (*destroy)(void*) = nullptr;
+    SEXP make = nullptr;             // generator$new, looked up on first use
+};
+template<class T> struct Info { static TypeInfo value; };
+template<class T> TypeInfo Info<T>::value;
+template<class T> struct Bound : std::false_type {};
+template<class T> inline constexpr bool bound_v = Bound<std::remove_cv_t<T>>::value;
+template<class T> struct Copyable : std::bool_constant<std::is_copy_constructible_v<T> && !std::is_abstract_v<T>> {};
+template<class T> inline constexpr bool copyable_v = Copyable<std::remove_cv_t<T>>::value;
+inline std::map<std::type_index, TypeInfo*>& registry() { static std::map<std::type_index, TypeInfo*> value; return value; }
+template<class T> void register_type(const char* name) {
+    auto& info = Info<T>::value;
+    info.name = name;
+    if constexpr (std::is_destructible_v<T>) info.destroy = [](void* p) { delete static_cast<T*>(p); };
+    registry()[std::type_index(typeid(T))] = &info;
+}
+template<class Derived, class Base> void add_base() {
+    Info<Derived>::value.bases.push_back({&Info<Base>::value, [](void* ptr) -> void* {
+        return static_cast<Base*>(static_cast<Derived*>(ptr));
+    }});
+}
+
+// The environment holding the generated R classes (a package namespace or a local scope).
+inline SEXP& module_env() { static SEXP value = nullptr; return value; }
+inline const char*& package_name() { static const char* value = nullptr; return value; }
+inline SEXP environment() {
+    if (!module_env() && package_name()) {
+        Protect call(Rf_lang2(Rf_install("getNamespace"), Rf_mkString(package_name())));
+        SEXP env = eval(call.get(), R_BaseEnv);
+        R_PreserveObject(env);
+        module_env() = env;
+    }
+    if (!module_env()) fail("native module is not initialized");
+    return module_env();
+}
+
+// The native side of an R object: the external pointer's address.
+struct Holder {
+    void* ptr = nullptr;
+    TypeInfo* info = nullptr;
+    bool owned = false;
+    std::shared_ptr<void>* shared = nullptr;
+    bool director = false; // the object is an R6 subclass implemented through a generated director
+};
+inline SEXP tag() { static SEXP value = Rf_install(ROSETTA_R_TAG); return value; }
+inline SEXP ptr_symbol() { static SEXP value = Rf_install(".ptr"); return value; }
+inline void release(Holder* holder) noexcept {
+    if (!holder) return;
+    if (holder->shared) delete holder->shared;
+    else if (holder->owned && holder->ptr && holder->info && holder->info->destroy) holder->info->destroy(holder->ptr);
+    delete holder;
+}
+inline void finalize(SEXP pointer) {
+    auto* holder = static_cast<Holder*>(R_ExternalPtrAddr(pointer));
+    R_ClearExternalPtr(pointer);
+    release(holder);
+}
+// The external pointer of an R object (R6 objects keep it in their .ptr field), or nullptr.
+inline SEXP pointer_of(SEXP value) {
+    if (TYPEOF(value) == ENVSXP) {
+        value = frame_variable(value, ptr_symbol());
+        if (!value) return nullptr;
+    }
+    if (TYPEOF(value) != EXTPTRSXP || R_ExternalPtrTag(value) != tag()) return nullptr;
+    return value;
+}
+inline Holder* holder_of(SEXP value) {
+    SEXP pointer = pointer_of(value);
+    return pointer ? static_cast<Holder*>(R_ExternalPtrAddr(pointer)) : nullptr;
+}
+// Base of generated director classes: C++ subclasses forwarding virtual calls to R6 overrides.
+// The R object owns its director; once C++ takes ownership, the director keeps the R object alive.
+struct Director {
+    SEXP rosetta_self = nullptr;   // the R6 object (an environment)
+    void* rosetta_native = nullptr; // the address its holder stores
+    bool rosetta_owns_self = false;
+    std::map<std::string, SEXP> rosetta_overrides;
+    Director() = default;
+    Director(const Director&) = delete;
+    Director& operator=(const Director&) = delete;
+    virtual ~Director() {
+        if (rosetta_self && rosetta_owns_self) {
+            if (auto* holder = holder_of(rosetta_self)) { holder->ptr = nullptr; holder->owned = false; }
+            R_ReleaseObject(rosetta_self);
+        }
+    }
+    // The R override of a virtual method, or nullptr when the native implementation applies.
+    SEXP rosetta_override(const char* name) {
+        const auto found = rosetta_overrides.find(name);
+        if (found != rosetta_overrides.end()) return found->second;
+        Protect call(Rf_lang3(Rf_install(".rosetta_override"), rosetta_self, Rf_mkString(name)));
+        SEXP method = eval(call.get(), environment());
+        // The method lives in the R object, which outlives its director (see above).
+        method = Rf_isNull(method) ? nullptr : method;
+        rosetta_overrides.emplace(name, method);
+        return method;
+    }
+};
+inline bool is_director(SEXP self) {
+    auto* holder = holder_of(self);
+    return holder && holder->director;
+}
+// Whether an R6 object is an instance of an R subclass of the named native class.
+inline bool is_subclass(SEXP self, const char* native_class) {
+    if (TYPEOF(self) != ENVSXP) return false;
+    SEXP classes = Rf_getAttrib(self, R_ClassSymbol);
+    return TYPEOF(classes) == STRSXP && XLENGTH(classes) > 0 && std::strcmp(CHAR(STRING_ELT(classes, 0)), native_class) != 0;
+}
+[[noreturn]] inline void pure_virtual(const char* name) {
+    fail(std::string("pure virtual method ") + name + " is not implemented by the R subclass");
+}
+inline void* cast_path(void* ptr, const TypeInfo* from, const TypeInfo* to) {
+    if (from == to) return ptr;
+    for (const auto& link : from->bases)
+        if (void* result = cast_path(link.upcast(ptr), link.base, to)) return result;
+    return nullptr;
+}
+inline bool derives(const TypeInfo* from, const TypeInfo* to) {
+    if (from == to) return true;
+    for (const auto& link : from->bases) if (derives(link.base, to)) return true;
+    return false;
+}
+template<class T> bool is_instance(SEXP value) {
+    SEXP pointer = pointer_of(value);
+    if (!pointer) return false;
+    auto* holder = static_cast<Holder*>(R_ExternalPtrAddr(pointer));
+    return !holder || (holder->info && derives(holder->info, &Info<std::remove_cv_t<T>>::value));
+}
+template<class T> T* native(SEXP value) {
+    using U = std::remove_cv_t<T>;
+    auto* info = &Info<U>::value;
+    SEXP pointer = pointer_of(value);
+    if (!pointer) fail(std::string("wrong native object type: expected ") + (info->name ? info->name : "native object") + ", got " + type_name(value));
+    auto* holder = static_cast<Holder*>(R_ExternalPtrAddr(pointer));
+    if (!holder || !holder->ptr) fail("native object is closed or unserialized");
+    void* result = cast_path(holder->ptr, holder->info, info);
+    if (!result) fail(std::string("wrong native object type: expected ") + (info->name ? info->name : "native object") + ", got " + (holder->info && holder->info->name ? holder->info->name : "native object"));
+    return static_cast<U*>(result);
+}
+
+enum class Ownership { borrowed, owned };
+// An external pointer owning (or borrowing) a native object; keepalive is kept reachable from it.
+inline SEXP make_pointer(void* ptr, TypeInfo* info, Ownership ownership, SEXP keepalive) {
+    auto* holder = new Holder{ptr, info, ownership == Ownership::owned, nullptr};
+    SEXP pointer = R_MakeExternalPtr(holder, tag(), keepalive ? keepalive : R_NilValue);
+    Protect guard(pointer);
+    R_RegisterCFinalizerEx(pointer, finalize, TRUE);
+    Rf_setAttrib(pointer, R_ClassSymbol, Rf_mkString("rosetta_ptr"));
+    return pointer;
+}
+// Wraps an external pointer in an instance of its R6 class.
+inline SEXP instantiate(SEXP pointer, TypeInfo* info) {
+    Protect guard(pointer);
+    if (!info->make) {
+        SEXP generator = frame_variable(environment(), Rf_install(info->name));
+        if (!generator || TYPEOF(generator) != ENVSXP) fail(std::string("R class ") + info->name + " is not defined");
+        SEXP make = frame_variable(generator, Rf_install("new"));
+        if (!make || !Rf_isFunction(make)) fail(std::string("R class ") + info->name + " has no new()");
+        R_PreserveObject(make);
+        info->make = make;
+    }
+    Protect call(Rf_lang2(info->make, pointer));
+    return eval(call.get(), R_GlobalEnv);
+}
+template<class T> SEXP wrap(T* value, Ownership ownership, SEXP keepalive) {
+    using U = std::remove_cv_t<T>;
+    if (!value) return R_NilValue;
+    TypeInfo* info = &Info<U>::value;
+    void* ptr = const_cast<U*>(value);
+    if constexpr (std::is_polymorphic_v<U>) {
+        if (auto* director = dynamic_cast<const Director*>(value); director && director->rosetta_self) {
+            if (ownership == Ownership::owned) {
+                // C++ handed back ownership of an R-implemented object.
+                auto* self = const_cast<Director*>(director);
+                if (auto* holder = holder_of(self->rosetta_self); holder && holder->ptr && !holder->owned && self->rosetta_owns_self) {
+                    holder->owned = true;
+                    self->rosetta_owns_self = false;
+                    R_ReleaseObject(self->rosetta_self);
+                }
+            }
+            return director->rosetta_self;
+        }
+        const auto found = registry().find(std::type_index(typeid(*value)));
+        if (found != registry().end() && found->second != info) {
+            info = found->second;
+            ptr = const_cast<void*>(dynamic_cast<const void*>(value));
+        }
+    }
+    if (!info->name) {
+        if (ownership == Ownership::owned && info->destroy) info->destroy(ptr);
+        fail("C++ result type is not exported to R");
+    }
+    return instantiate(make_pointer(ptr, info, ownership, keepalive), info);
+}
+template<class T> SEXP wrap_shared(std::shared_ptr<T> value) {
+    if (!value) return R_NilValue;
+    using U = std::remove_cv_t<T>;
+    TypeInfo* info = &Info<U>::value;
+    void* ptr = const_cast<U*>(value.get());
+    if constexpr (std::is_polymorphic_v<U>) {
+        if (auto* director = dynamic_cast<const Director*>(value.get()); director && director->rosetta_self)
+            return director->rosetta_self;
+        const auto found = registry().find(std::type_index(typeid(*value)));
+        if (found != registry().end() && found->second != info) {
+            info = found->second;
+            ptr = const_cast<void*>(dynamic_cast<const void*>(value.get()));
+        }
+    }
+    if (!info->name) fail("C++ result type is not exported to R");
+    SEXP pointer = make_pointer(ptr, info, Ownership::borrowed, nullptr);
+    Protect guard(pointer);
+    static_cast<Holder*>(R_ExternalPtrAddr(pointer))->shared =
+        new std::shared_ptr<void>(std::const_pointer_cast<U>(value), ptr);
+    return instantiate(pointer, info);
+}
+// An R object keeps a borrowed native object alive by holding its external pointer.
+struct Keeper {
+    SEXP value;
+    explicit Keeper(SEXP v) : value(v) { R_PreserveObject(value); }
+    ~Keeper() { R_ReleaseObject(value); }
+};
+template<class T> std::shared_ptr<T> shared(SEXP value) {
+    if (Rf_isNull(value)) return {};
+    T* ptr = native<T>(value);
+    SEXP pointer = pointer_of(value);
+    auto* holder = static_cast<Holder*>(R_ExternalPtrAddr(pointer));
+    // A director stays owned by its R object, which C++ keeps alive while it shares the object.
+    if (holder->director && !holder->shared) return std::shared_ptr<T>(std::make_shared<Keeper>(value), ptr);
+    if (!holder->shared) {
+        if (!holder->owned) return std::shared_ptr<T>(std::make_shared<Keeper>(pointer), ptr);
+        auto* info = holder->info;
+        holder->shared = new std::shared_ptr<void>(holder->ptr, [info](void* p) { if (info->destroy) info->destroy(p); });
+        holder->owned = false;
+    }
+    return std::shared_ptr<T>(*holder->shared, ptr);
+}
+template<class T> std::unique_ptr<T> take(SEXP value) {
+    if (Rf_isNull(value)) return {};
+    T* ptr = native<T>(value);
+    auto* holder = holder_of(value);
+    if (holder->shared || !holder->owned) fail("cannot transfer ownership of a shared or borrowed native object");
+    if (holder->info != &Info<std::remove_cv_t<T>>::value && !std::has_virtual_destructor_v<T>)
+        fail("cannot transfer a derived object without a virtual destructor");
+    holder->owned = false;
+    bool kept = false;
+    if constexpr (std::is_polymorphic_v<T>) {
+        if (auto* director = dynamic_cast<Director*>(ptr); director && holder->director) {
+            // The C++ owner now keeps the R implementation alive; the R object stays usable.
+            director->rosetta_owns_self = true;
+            R_PreserveObject(director->rosetta_self);
+            kept = true;
+        }
+    }
+    if (!kept) holder->ptr = nullptr;
+    return std::unique_ptr<T>(ptr);
+}
+// The owned external pointer a constructor stores in its R object.
+template<class T> SEXP adopt(T* created) {
+    return make_pointer(created, &Info<std::remove_cv_t<T>>::value, Ownership::owned, nullptr);
+}
+// The owned external pointer of a director created for an R subclass instance.
+template<class T> SEXP adopt_director(T* created, Director* director, SEXP self) {
+    SEXP pointer = adopt(created);
+    static_cast<Holder*>(R_ExternalPtrAddr(pointer))->director = true;
+    director->rosetta_self = self;
+    director->rosetta_native = static_cast<void*>(created);
+    return pointer;
+}
+)cpp",
+R"cpp(
+// ---------------------------------------------------------------- values
+template<class T, class = void> struct Value;
+
+inline bool scalar(SEXP value) {
+    switch (TYPEOF(value)) {
+    case LGLSXP: case INTSXP: case REALSXP: case STRSXP: case RAWSXP: case CPLXSXP: return XLENGTH(value) == 1;
+    default: return false;
+    }
+}
+inline bool numeric(SEXP value) { return TYPEOF(value) == INTSXP || TYPEOF(value) == REALSXP; }
+inline double number(SEXP value) {
+    if (TYPEOF(value) == INTSXP) {
+        if (INTEGER(value)[0] == NA_INTEGER) fail("expected a number, without NA");
+        return INTEGER(value)[0];
+    }
+    if (TYPEOF(value) == LGLSXP) return LOGICAL(value)[0];
+    return REAL(value)[0];
+}
+// R stores integers as doubles: whole numbers (up to 2^53) convert to C++ integers.
+template<class T> bool fits(double n) {
+    if (!std::isfinite(n) || std::trunc(n) != n || std::abs(n) > 9007199254740992.0) return false;
+    const long double wide = n;
+    return wide >= static_cast<long double>(std::numeric_limits<T>::lowest()) &&
+           wide <= static_cast<long double>(std::numeric_limits<T>::max());
+}
+// Integral results that fit R's integer type stay integers; wider ones become doubles.
+template<class T> inline constexpr bool r_integer_v = std::is_integral_v<T> && !std::is_same_v<T, bool> &&
+    (sizeof(T) < 4 || (sizeof(T) == 4 && std::is_signed_v<T>));
+template<class T> SEXP number_result(T value) {
+    if constexpr (r_integer_v<T>) {
+        // INT_MIN is R's integer NA: that one value is returned as a double.
+        if (static_cast<long long>(value) == static_cast<long long>(INT_MIN)) return Rf_ScalarReal(static_cast<double>(value));
+        return Rf_ScalarInteger(static_cast<int>(value));
+    }
+    else if constexpr (std::is_integral_v<T>) {
+        if (static_cast<long double>(value) < -9007199254740992.0L || static_cast<long double>(value) > 9007199254740992.0L)
+            fail("C++ integer result exceeds R's exact numeric range");
+        return Rf_ScalarReal(static_cast<double>(value));
+    } else return Rf_ScalarReal(static_cast<double>(value));
+}
+
+template<class T> struct Value<T, std::enable_if_t<std::is_same_v<T, bool>>> {
+    static bool check(SEXP value, bool) { return scalar(value) && TYPEOF(value) == LGLSXP && LOGICAL(value)[0] != NA_LOGICAL; }
+    static bool load(SEXP value) {
+        if (!check(value, false)) fail("expected TRUE or FALSE, without NA");
+        return LOGICAL(value)[0] != 0;
+    }
+    static SEXP cast(bool value) { return Rf_ScalarLogical(value); }
+};
+template<class T> struct Value<T, std::enable_if_t<std::is_integral_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, char>>> {
+    static bool check(SEXP value, bool strict) {
+        if (!scalar(value)) return false;
+        if (TYPEOF(value) == INTSXP) return INTEGER(value)[0] != NA_INTEGER && fits<T>(INTEGER(value)[0]);
+        if (strict) return false;
+        if (TYPEOF(value) == REALSXP) return fits<T>(REAL(value)[0]);
+        return false;
+    }
+    static T load(SEXP value) {
+        if (!numeric(value) || !scalar(value)) fail("expected an integer or numeric scalar, without NA");
+        const double n = number(value);
+        if (!std::isfinite(n)) fail("expected a finite number");
+        if (std::trunc(n) != n || std::abs(n) > 9007199254740992.0) fail("expected an exactly representable integer (up to 2^53)");
+        if (!fits<T>(n)) fail("number outside C++ type range");
+        return static_cast<T>(n);
+    }
+    static SEXP cast(T value) { return number_result(value); }
+};
+template<class T> struct Value<T, std::enable_if_t<std::is_floating_point_v<T>>> {
+    static bool check(SEXP value, bool strict) {
+        if (!scalar(value)) return false;
+        if (TYPEOF(value) == REALSXP) return true;
+        return !strict && TYPEOF(value) == INTSXP && INTEGER(value)[0] != NA_INTEGER;
+    }
+    static T load(SEXP value) {
+        if (!numeric(value) || !scalar(value)) fail("expected a numeric scalar");
+        const double n = number(value);
+        if (std::isfinite(n) && std::abs(n) > static_cast<double>(std::numeric_limits<T>::max()))
+            fail("number outside C++ type range");
+        return static_cast<T>(n);
+    }
+    static SEXP cast(T value) { return Rf_ScalarReal(static_cast<double>(value)); }
+};
+inline bool is_string(SEXP value) { return TYPEOF(value) == STRSXP && scalar(value) && STRING_ELT(value, 0) != NA_STRING; }
+inline std::string text(SEXP element) { return Rf_translateCharUTF8(element); }
+inline SEXP make_char(const std::string& value) {
+    if (value.size() > static_cast<std::size_t>(INT_MAX)) fail("string too long for R");
+    return Rf_mkCharLenCE(value.data(), static_cast<int>(value.size()), CE_UTF8);
+}
+template<> struct Value<char> {
+    static bool check(SEXP value, bool strict) {
+        if (is_string(value)) return LENGTH(STRING_ELT(value, 0)) == 1;
+        return !strict && Value<int>::check(value, false);
+    }
+    static char load(SEXP value) {
+        if (is_string(value)) {
+            const auto s = text(STRING_ELT(value, 0));
+            if (s.size() != 1) fail("expected a single character");
+            return s[0];
+        }
+        return static_cast<char>(Value<int>::load(value));
+    }
+    static SEXP cast(char value) { return Rf_ScalarString(make_char(std::string(1, value))); }
+};
+template<> struct Value<std::string> {
+    static bool check(SEXP value, bool) { return is_string(value); }
+    static std::string load(SEXP value) {
+        if (!is_string(value)) fail("expected a string, without NA");
+        return text(STRING_ELT(value, 0));
+    }
+    static SEXP cast(const std::string& value) {
+        Protect element(make_char(value));
+        return Rf_ScalarString(element.get());
+    }
+};
+template<> struct Value<std::string_view> {
+    static bool check(SEXP value, bool strict) { return Value<std::string>::check(value, strict); }
+    static SEXP cast(std::string_view value) { return Value<std::string>::cast(std::string(value)); }
+};
+template<> struct Value<const char*> {
+    static SEXP cast(const char* value) { return value ? Value<std::string>::cast(value) : R_NilValue; }
+};
+template<> struct Value<char*> {
+    static SEXP cast(const char* value) { return Value<const char*>::cast(value); }
+};
+template<> struct Value<std::filesystem::path> {
+    static bool check(SEXP value, bool) { return is_string(value); }
+    static std::filesystem::path load(SEXP value) {
+        std::string text = Value<std::string>::load(value);
+#if defined(__cpp_char8_t)
+        return std::filesystem::path(std::u8string(text.begin(), text.end()));
+#else
+        return std::filesystem::u8path(text);
+#endif
+    }
+    static SEXP cast(const std::filesystem::path& value) {
+        const auto text = value.u8string(); // std::u8string from C++20
+        return Value<std::string>::cast(std::string(text.begin(), text.end()));
+    }
+};
+template<> struct Value<std::nullptr_t> {
+    static bool check(SEXP value, bool) { return Rf_isNull(value); }
+    static std::nullptr_t load(SEXP) { return nullptr; }
+    static SEXP cast(std::nullptr_t) { return R_NilValue; }
+};
+template<> struct Value<std::monostate> {
+    static bool check(SEXP value, bool) { return Rf_isNull(value); }
+    static std::monostate load(SEXP) { return {}; }
+    static SEXP cast(std::monostate) { return R_NilValue; }
+};
+template<class T> struct Value<std::complex<T>> {
+    static bool check(SEXP value, bool strict) {
+        if (!scalar(value)) return false;
+        return TYPEOF(value) == CPLXSXP || (!strict && numeric(value));
+    }
+    static std::complex<T> load(SEXP value) {
+        if (TYPEOF(value) == CPLXSXP && scalar(value)) return {static_cast<T>(COMPLEX(value)[0].r), static_cast<T>(COMPLEX(value)[0].i)};
+        return {static_cast<T>(Value<double>::load(value)), T{}};
+    }
+    static SEXP cast(const std::complex<T>& value) {
+        SEXP result = Rf_allocVector(CPLXSXP, 1);
+        COMPLEX(result)[0].r = static_cast<double>(value.real());
+        COMPLEX(result)[0].i = static_cast<double>(value.imag());
+        return result;
+    }
+};
+
+// Enumerations cross as enumerator names (character); numbers are accepted on input.
+template<class E> struct EnumTable { static inline std::vector<std::pair<std::string, long long>> entries; };
+template<class T> struct Value<T, std::enable_if_t<std::is_enum_v<T>>> {
+    using U = std::underlying_type_t<T>;
+    static bool check(SEXP value, bool strict) {
+        if (is_string(value)) {
+            // Loosely any name matches, so that a sole overload reports the unknown enumerator.
+            if (!strict) return true;
+            const auto name = text(STRING_ELT(value, 0));
+            for (const auto& entry : EnumTable<T>::entries) if (entry.first == name) return true;
+            return false;
+        }
+        return Value<U>::check(value, strict) || Value<U>::check(value, false);
+    }
+    static T load(SEXP value) {
+        if (is_string(value)) {
+            const auto name = text(STRING_ELT(value, 0));
+            for (const auto& entry : EnumTable<T>::entries) if (entry.first == name) return static_cast<T>(entry.second);
+            std::string names;
+            for (const auto& entry : EnumTable<T>::entries) names += (names.empty() ? "" : ", ") + entry.first;
+            fail("unknown enumerator '" + name + "' (expected one of " + names + ")");
+        }
+        return static_cast<T>(Value<U>::load(value));
+    }
+    static SEXP cast(T value) {
+        for (const auto& entry : EnumTable<T>::entries)
+            if (entry.second == static_cast<long long>(value)) return Value<std::string>::cast(entry.first);
+        return Value<U>::cast(static_cast<U>(value));
+    }
+};
+
+// Exported classes by value: copies in, owned copies out.
+template<class T> struct Value<T, std::enable_if_t<bound_v<T>>> {
+    static bool check(SEXP value, bool) { return is_instance<T>(value); }
+    static T load(SEXP value) {
+        if constexpr (copyable_v<T>) return *native<T>(value);
+        else { fail("C++ class is not copyable"); }
+    }
+    static SEXP cast(T&& value) {
+        if constexpr (std::is_move_constructible_v<T>) return wrap(new T(std::move(value)), Ownership::owned, nullptr);
+        else { (void)value; fail("C++ class is not movable"); }
+    }
+    static SEXP cast(const T& value) {
+        if constexpr (copyable_v<T>) return wrap(new T(value), Ownership::owned, nullptr);
+        else { (void)value; fail("C++ class is not copyable"); }
+    }
+};
+template<class T> struct Value<T*, std::enable_if_t<bound_v<T>>> {
+    static bool check(SEXP value, bool) { return Rf_isNull(value) || is_instance<T>(value); }
+    static T* load(SEXP value) { return Rf_isNull(value) ? nullptr : native<T>(value); }
+    static SEXP cast(T* value) { return wrap(value, Ownership::borrowed, nullptr); }
+};
+template<class T> struct Value<std::shared_ptr<T>, std::enable_if_t<bound_v<T>>> {
+    static bool check(SEXP value, bool) { return Rf_isNull(value) || is_instance<T>(value); }
+    static std::shared_ptr<T> load(SEXP value) { return shared<T>(value); }
+    static SEXP cast(const std::shared_ptr<T>& value) { return wrap_shared(value); }
+};
+template<class T, class D> struct Value<std::unique_ptr<T, D>, std::enable_if_t<bound_v<T>>> {
+    static bool check(SEXP value, bool) { return Rf_isNull(value) || is_instance<T>(value); }
+    static std::unique_ptr<T, D> load(SEXP value) {
+        if constexpr (std::is_same_v<D, std::default_delete<T>>) return take<T>(value);
+        else fail("unique_ptr with a custom deleter cannot take ownership");
+    }
+    static SEXP cast(std::unique_ptr<T, D>&& value) {
+        if constexpr (std::is_same_v<D, std::default_delete<T>>) return wrap(value.release(), Ownership::owned, nullptr);
+        else fail("unique_ptr with a custom deleter cannot be returned");
+    }
+};
+template<class T> struct Value<std::optional<T>> {
+    static bool check(SEXP value, bool strict) { return Rf_isNull(value) || Value<T>::check(value, strict); }
+    static std::optional<T> load(SEXP value) {
+        if (Rf_isNull(value)) return std::nullopt;
+        return Value<T>::load(value);
+    }
+    static SEXP cast(const std::optional<T>& value) { return value ? Value<T>::cast(*value) : R_NilValue; }
+    static SEXP cast(std::optional<T>&& value) { return value ? Value<T>::cast(std::move(*value)) : R_NilValue; }
+};
+template<class T> struct Value<std::reference_wrapper<T>> {
+    static SEXP cast(std::reference_wrapper<T> value) {
+        using U = std::remove_cv_t<T>;
+        if constexpr (bound_v<U>) return wrap(const_cast<U*>(&value.get()), Ownership::borrowed, nullptr);
+        else return Value<U>::cast(value.get());
+    }
+};
+)cpp",
+R"cpp(
+// ---------------------------------------------------------------- sequences
+// Atomic R vectors carry scalar elements (logical, integer, double, character, raw input);
+// every other element type travels in a list.
+enum class Atomic { none, logical, integer, real, string, raw };
+template<class E> constexpr Atomic atomic_kind() {
+    if constexpr (std::is_same_v<E, bool>) return Atomic::logical;
+    else if constexpr (std::is_same_v<E, unsigned char>) return Atomic::raw;
+    else if constexpr (std::is_same_v<E, std::string> || std::is_same_v<E, char> || std::is_same_v<E, std::filesystem::path>) return Atomic::string;
+    else if constexpr (r_integer_v<E>) return Atomic::integer;
+    else if constexpr (std::is_arithmetic_v<E>) return Atomic::real;
+    else if constexpr (std::is_enum_v<E>) return Atomic::string;
+    else return Atomic::none;
+}
+// One element of an R vector as a length-one R value (lists return the element itself).
+inline SEXP element(SEXP value, R_xlen_t i) {
+    switch (TYPEOF(value)) {
+    case VECSXP: return VECTOR_ELT(value, i);
+    case LGLSXP: return Rf_ScalarLogical(LOGICAL(value)[i]);
+    case INTSXP: return Rf_ScalarInteger(INTEGER(value)[i]);
+    case REALSXP: return Rf_ScalarReal(REAL(value)[i]);
+    case STRSXP: return Rf_ScalarString(STRING_ELT(value, i));
+    case RAWSXP: return Rf_ScalarRaw(RAW(value)[i]);
+    case CPLXSXP: { SEXP r = Rf_allocVector(CPLXSXP, 1); COMPLEX(r)[0] = COMPLEX(value)[i]; return r; }
+    default: fail("expected a vector or list");
+    }
+}
+inline bool sequence_like(SEXP value) {
+    switch (TYPEOF(value)) {
+    case NILSXP: case VECSXP: case LGLSXP: case INTSXP: case REALSXP: case STRSXP: case RAWSXP: case CPLXSXP: return true;
+    default: return false;
+    }
+}
+template<class E> bool check_elements(SEXP value, bool strict) {
+    if (Rf_isNull(value)) return !strict;
+    if (!sequence_like(value)) return false;
+    if (Rf_inherits(value, "factor") || Rf_inherits(value, "data.frame")) return false;
+    constexpr Atomic kind = atomic_kind<E>();
+    const R_xlen_t n = XLENGTH(value);
+    if (TYPEOF(value) != VECSXP) {
+        // Strictly, an atomic vector of length one is a scalar (preferring scalar overloads).
+        if (strict && n == 1) return false;
+        if constexpr (kind == Atomic::none) {
+            if constexpr (std::is_same_v<E, std::complex<double>> || std::is_same_v<E, std::complex<float>>)
+                return TYPEOF(value) == CPLXSXP || (!strict && numeric(value));
+            else return false;
+        } else if constexpr (kind == Atomic::logical) {
+            if (TYPEOF(value) != LGLSXP) return false;
+            for (R_xlen_t i = 0; i < n; ++i) if (LOGICAL(value)[i] == NA_LOGICAL) return false;
+            return true;
+        } else if constexpr (kind == Atomic::raw) {
+            if (TYPEOF(value) == RAWSXP) return true;
+            if (strict) return false;
+        } else if constexpr (kind == Atomic::string) {
+            if constexpr (std::is_enum_v<E>) { for (R_xlen_t i = 0; i < n; ++i) { SEXP e = PROTECT(element(value, i)); bool ok = Value<E>::check(e, false); UNPROTECT(1); if (!ok) return false; } return true; }
+            else if constexpr (std::is_same_v<E, char>) return TYPEOF(value) == STRSXP;
+            else {
+                if (TYPEOF(value) != STRSXP) return false;
+                for (R_xlen_t i = 0; i < n; ++i) if (STRING_ELT(value, i) == NA_STRING) return false;
+                return true;
+            }
+        } else if constexpr (kind == Atomic::integer || (kind == Atomic::real && std::is_integral_v<E>)) {
+            if (TYPEOF(value) == INTSXP) { for (R_xlen_t i = 0; i < n; ++i) if (INTEGER(value)[i] == NA_INTEGER || !fits<E>(INTEGER(value)[i])) return false; return true; }
+            if (strict && kind == Atomic::integer) return false;
+            if (TYPEOF(value) == REALSXP) { for (R_xlen_t i = 0; i < n; ++i) if (!fits<E>(REAL(value)[i])) return false; return true; }
+            return !strict && TYPEOF(value) == LGLSXP;
+        } else {
+            if (TYPEOF(value) == REALSXP) return true;
+            if (strict) return false;
+            if (TYPEOF(value) == INTSXP) { for (R_xlen_t i = 0; i < n; ++i) if (INTEGER(value)[i] == NA_INTEGER) return false; return true; }
+            return TYPEOF(value) == LGLSXP;
+        }
+        // Fall through: element-wise checks (numbers for raw vectors).
+        for (R_xlen_t i = 0; i < n; ++i) {
+            SEXP e = PROTECT(element(value, i));
+            const bool ok = Value<E>::check(e, false);
+            UNPROTECT(1);
+            if (!ok) return false;
+        }
+        return true;
+    }
+    for (R_xlen_t i = 0; i < n; ++i) if (!Value<E>::check(VECTOR_ELT(value, i), strict)) return false;
+    return true;
+}
+template<class E> E load_element(SEXP value, R_xlen_t i) {
+    constexpr Atomic kind = atomic_kind<E>();
+    if (TYPEOF(value) == VECSXP) return Value<E>::load(VECTOR_ELT(value, i));
+    if constexpr (kind == Atomic::real && std::is_floating_point_v<E>) {
+        if (TYPEOF(value) == REALSXP) return static_cast<E>(REAL(value)[i]);
+    } else if constexpr (kind == Atomic::integer) {
+        if (TYPEOF(value) == INTSXP) {
+            if (INTEGER(value)[i] == NA_INTEGER) fail("expected integers, without NA");
+            return static_cast<E>(INTEGER(value)[i]);
+        }
+    } else if constexpr (kind == Atomic::string && std::is_same_v<E, std::string>) {
+        if (TYPEOF(value) == STRSXP) {
+            if (STRING_ELT(value, i) == NA_STRING) fail("expected strings, without NA");
+            return text(STRING_ELT(value, i));
+        }
+    } else if constexpr (kind == Atomic::raw) {
+        if (TYPEOF(value) == RAWSXP) return static_cast<E>(RAW(value)[i]);
+    }
+    Protect e(element(value, i));
+    return Value<E>::load(e.get());
+}
+template<class E, class Range> SEXP cast_elements(const Range& range, std::size_t size) {
+    constexpr Atomic kind = atomic_kind<E>();
+    const auto n = static_cast<R_xlen_t>(size);
+    R_xlen_t i = 0;
+    if constexpr (kind == Atomic::logical) {
+        Protect result(Rf_allocVector(LGLSXP, n));
+        for (const auto& item : range) LOGICAL(result.get())[i++] = static_cast<bool>(item);
+        return result.get();
+    } else if constexpr (kind == Atomic::raw) {
+        // Bytes come back as integers, as in the Python backend; raw vectors are accepted as input.
+        Protect result(Rf_allocVector(INTSXP, n));
+        for (const auto& item : range) INTEGER(result.get())[i++] = static_cast<int>(item);
+        return result.get();
+    } else if constexpr (kind == Atomic::integer) {
+        bool narrow = true; // INT_MIN is R's integer NA: such vectors become doubles
+        for (const auto& item : range) if (static_cast<long long>(item) == static_cast<long long>(INT_MIN)) narrow = false;
+        Protect result(Rf_allocVector(narrow ? INTSXP : REALSXP, n));
+        for (const auto& item : range) {
+            if (narrow) INTEGER(result.get())[i++] = static_cast<int>(item);
+            else REAL(result.get())[i++] = static_cast<double>(item);
+        }
+        return result.get();
+    } else if constexpr (kind == Atomic::real) {
+        Protect result(Rf_allocVector(REALSXP, n));
+        for (const auto& item : range) {
+            if constexpr (std::is_integral_v<E>) {
+                if (static_cast<long double>(item) < -9007199254740992.0L || static_cast<long double>(item) > 9007199254740992.0L)
+                    fail("C++ integer result exceeds R's exact numeric range");
+            }
+            REAL(result.get())[i++] = static_cast<double>(item);
+        }
+        return result.get();
+    } else if constexpr (kind == Atomic::string) {
+        Protect result(Rf_allocVector(STRSXP, n));
+        for (const auto& item : range) {
+            Protect converted(Value<E>::cast(item));
+            SET_STRING_ELT(result.get(), i++, TYPEOF(converted.get()) == STRSXP ? STRING_ELT(converted.get(), 0) : NA_STRING);
+        }
+        return result.get();
+    } else {
+        Protect result(Rf_allocVector(VECSXP, n));
+        for (const auto& item : range) SET_VECTOR_ELT(result.get(), i++, Value<E>::cast(item));
+        return result.get();
+    }
+}
+template<class C, class E> struct Sequence {
+    static bool check(SEXP value, bool strict) { return check_elements<E>(value, strict); }
+    static C load(SEXP value) {
+        if (Rf_isNull(value)) return C{};
+        if (!sequence_like(value)) fail("expected a vector or list, got " + type_name(value));
+        C result;
+        const R_xlen_t n = XLENGTH(value);
+        if constexpr (std::is_same_v<C, std::vector<E>>) result.reserve(static_cast<std::size_t>(n));
+        for (R_xlen_t i = 0; i < n; ++i) {
+            if constexpr (std::is_same_v<C, std::set<E>>) result.insert(load_element<E>(value, i));
+            else result.push_back(load_element<E>(value, i));
+        }
+        return result;
+    }
+    static SEXP cast(const C& value) { return cast_elements<E>(value, value.size()); }
+};
+template<class E, class A> struct Value<std::vector<E, A>> : Sequence<std::vector<E, A>, E> {};
+template<class A> struct Value<std::vector<bool, A>> {
+    static bool check(SEXP value, bool strict) { return check_elements<bool>(value, strict); }
+    static std::vector<bool, A> load(SEXP value) {
+        std::vector<bool, A> result;
+        if (Rf_isNull(value)) return result;
+        for (R_xlen_t i = 0; i < XLENGTH(value); ++i) result.push_back(load_element<bool>(value, i));
+        return result;
+    }
+    static SEXP cast(const std::vector<bool, A>& value) {
+        Protect result(Rf_allocVector(LGLSXP, static_cast<R_xlen_t>(value.size())));
+        for (std::size_t i = 0; i < value.size(); ++i) LOGICAL(result.get())[i] = value[i];
+        return result.get();
+    }
+};
+template<class E, class A> struct Value<std::deque<E, A>> : Sequence<std::deque<E, A>, E> {};
+template<class E, class A> struct Value<std::list<E, A>> : Sequence<std::list<E, A>, E> {};
+template<class E> struct Value<std::set<E>> : Sequence<std::set<E>, E> {};
+template<class E> struct Value<std::unordered_set<E>> {
+    static bool check(SEXP value, bool strict) { return check_elements<E>(value, strict); }
+    static std::unordered_set<E> load(SEXP value) {
+        std::unordered_set<E> result;
+        if (Rf_isNull(value)) return result;
+        for (R_xlen_t i = 0; i < XLENGTH(value); ++i) result.insert(load_element<E>(value, i));
+        return result;
+    }
+    static SEXP cast(const std::unordered_set<E>& value) { return cast_elements<E>(value, value.size()); }
+};
+template<class E> struct Value<std::valarray<E>> {
+    static bool check(SEXP value, bool strict) { return check_elements<E>(value, strict); }
+    static std::valarray<E> load(SEXP value) {
+        const auto items = Value<std::vector<E>>::load(value);
+        return std::valarray<E>(items.data(), items.size());
+    }
+    static SEXP cast(const std::valarray<E>& value) { return cast_elements<E>(std::vector<E>(std::begin(value), std::end(value)), value.size()); }
+};
+template<class E, std::size_t N> struct Value<std::array<E, N>> {
+    static bool check(SEXP value, bool strict) {
+        if (!sequence_like(value) || Rf_isNull(value) || static_cast<std::size_t>(XLENGTH(value)) != N) return N == 0 && Rf_isNull(value);
+        return check_elements<E>(value, strict && N != 1);
+    }
+    static std::array<E, N> load(SEXP value) {
+        if (static_cast<std::size_t>(Rf_isNull(value) ? 0 : XLENGTH(value)) != N) fail("expected " + std::to_string(N) + " elements");
+        std::array<E, N> result{};
+        for (std::size_t i = 0; i < N; ++i) result[i] = load_element<E>(value, static_cast<R_xlen_t>(i));
+        return result;
+    }
+    static SEXP cast(const std::array<E, N>& value) { return cast_elements<E>(value, N); }
+};
+
+// Maps with string keys are named vectors (atomic values) or named lists; other keys use
+// list(keys = ..., values = ...).
+template<class M, class K, class V> struct Mapping {
+    static constexpr bool named = std::is_same_v<K, std::string>;
+    static bool check(SEXP value, bool strict) {
+        if (Rf_isNull(value)) return !strict;
+        if constexpr (named) {
+            if (!sequence_like(value)) return false;
+            SEXP names = Rf_getAttrib(value, R_NamesSymbol);
+            if (XLENGTH(value) > 0 && TYPEOF(names) != STRSXP) return false;
+            return check_elements<V>(value, false);
+        } else {
+            if (TYPEOF(value) != VECSXP || XLENGTH(value) != 2) return false;
+            return check_elements<K>(VECTOR_ELT(value, 0), false) && check_elements<V>(VECTOR_ELT(value, 1), false) &&
+                (Rf_isNull(VECTOR_ELT(value, 0)) ? 0 : XLENGTH(VECTOR_ELT(value, 0))) == (Rf_isNull(VECTOR_ELT(value, 1)) ? 0 : XLENGTH(VECTOR_ELT(value, 1)));
+        }
+    }
+    static M load(SEXP value) {
+        M result;
+        if (Rf_isNull(value)) return result;
+        if constexpr (named) {
+            SEXP names = Rf_getAttrib(value, R_NamesSymbol);
+            if (XLENGTH(value) > 0 && TYPEOF(names) != STRSXP) fail("expected a named list or vector");
+            for (R_xlen_t i = 0; i < XLENGTH(value); ++i) result.emplace(text(STRING_ELT(names, i)), load_element<V>(value, i));
+        } else {
+            if (TYPEOF(value) != VECSXP || XLENGTH(value) != 2) fail("expected list(keys = ..., values = ...)");
+            const auto keys = Value<std::vector<K>>::load(VECTOR_ELT(value, 0));
+            SEXP values = VECTOR_ELT(value, 1);
+            for (std::size_t i = 0; i < keys.size(); ++i) result.emplace(keys[i], load_element<V>(values, static_cast<R_xlen_t>(i)));
+        }
+        return result;
+    }
+    static SEXP cast(const M& value) {
+        std::vector<K> keys;
+        std::vector<const V*> values;
+        for (const auto& item : value) { keys.push_back(item.first); values.push_back(&item.second); }
+        struct Range {
+            const std::vector<const V*>& v;
+            struct It { typename std::vector<const V*>::const_iterator i; const V& operator*() const { return **i; }
+                It& operator++() { ++i; return *this; } bool operator!=(const It& o) const { return i != o.i; } };
+            It begin() const { return {v.begin()}; } It end() const { return {v.end()}; }
+        } range{values};
+        Protect converted(cast_elements<V>(range, values.size()));
+        if constexpr (named) {
+            Protect names(Rf_allocVector(STRSXP, static_cast<R_xlen_t>(keys.size())));
+            for (std::size_t i = 0; i < keys.size(); ++i) SET_STRING_ELT(names.get(), static_cast<R_xlen_t>(i), make_char(keys[i]));
+            Rf_setAttrib(converted.get(), R_NamesSymbol, names.get());
+            return converted.get();
+        } else {
+            Protect key_values(Value<std::vector<K>>::cast(keys));
+            Protect result(Rf_allocVector(VECSXP, 2));
+            SET_VECTOR_ELT(result.get(), 0, key_values.get());
+            SET_VECTOR_ELT(result.get(), 1, converted.get());
+            Protect names(Rf_allocVector(STRSXP, 2));
+            SET_STRING_ELT(names.get(), 0, Rf_mkChar("keys"));
+            SET_STRING_ELT(names.get(), 1, Rf_mkChar("values"));
+            Rf_setAttrib(result.get(), R_NamesSymbol, names.get());
+            return result.get();
+        }
+    }
+};
+template<class K, class V, class C, class A> struct Value<std::map<K, V, C, A>> : Mapping<std::map<K, V, C, A>, K, V> {};
+template<class K, class V, class H, class E, class A> struct Value<std::unordered_map<K, V, H, E, A>> : Mapping<std::unordered_map<K, V, H, E, A>, K, V> {};
+
+// Pairs are list(first = , second = ); tuples are unnamed lists. Atomic vectors of the
+// right length also convert when every element does.
+template<class... T> struct Product {
+    static constexpr std::size_t N = sizeof...(T);
+    static bool check(SEXP value, bool strict) {
+        if (!sequence_like(value) || Rf_isNull(value) || XLENGTH(value) != static_cast<R_xlen_t>(N)) return false;
+        if (TYPEOF(value) != VECSXP && strict) return false;
+        return check_each(value, strict, std::index_sequence_for<T...>{});
+    }
+    template<std::size_t... I> static bool check_each(SEXP value, bool strict, std::index_sequence<I...>) {
+        bool ok = true;
+        ((ok = ok && [&] { Protect e(element(value, static_cast<R_xlen_t>(I))); return Value<T>::check(e.get(), strict); }()), ...);
+        return ok;
+    }
+    template<class Tuple, std::size_t... I> static Tuple load_each(SEXP value, std::index_sequence<I...>) {
+        if (!sequence_like(value) || Rf_isNull(value) || XLENGTH(value) != static_cast<R_xlen_t>(N))
+            fail("expected a list of " + std::to_string(N) + " elements");
+        return Tuple(load_element<T>(value, static_cast<R_xlen_t>(I))...);
+    }
+    template<class Tuple, std::size_t... I> static SEXP cast_each(const Tuple& value, const char* const* names, std::index_sequence<I...>) {
+        Protect result(Rf_allocVector(VECSXP, static_cast<R_xlen_t>(N)));
+        ((SET_VECTOR_ELT(result.get(), static_cast<R_xlen_t>(I), Value<T>::cast(std::get<I>(value)))), ...);
+        if (names) {
+            Protect text(Rf_allocVector(STRSXP, static_cast<R_xlen_t>(N)));
+            for (std::size_t i = 0; i < N; ++i) SET_STRING_ELT(text.get(), static_cast<R_xlen_t>(i), Rf_mkChar(names[i]));
+            Rf_setAttrib(result.get(), R_NamesSymbol, text.get());
+        }
+        return result.get();
+    }
+};
+template<class A, class B> struct Value<std::pair<A, B>> {
+    using P = Product<A, B>;
+    static bool check(SEXP value, bool strict) { return P::check(value, strict); }
+    static std::pair<A, B> load(SEXP value) { return P::template load_each<std::pair<A, B>>(value, std::index_sequence_for<A, B>{}); }
+    static SEXP cast(const std::pair<A, B>& value) {
+        static const char* const names[] = {"first", "second"};
+        return P::cast_each(value, names, std::index_sequence_for<A, B>{});
+    }
+};
+template<class... T> struct Value<std::tuple<T...>> {
+    using P = Product<T...>;
+    static bool check(SEXP value, bool strict) { return P::check(value, strict); }
+    static std::tuple<T...> load(SEXP value) { return P::template load_each<std::tuple<T...>>(value, std::index_sequence_for<T...>{}); }
+    static SEXP cast(const std::tuple<T...>& value) { return P::cast_each(value, nullptr, std::index_sequence_for<T...>{}); }
+};
+template<class... T> struct Value<std::variant<T...>> {
+    static bool check(SEXP value, bool strict) { return (Value<T>::check(value, strict) || ...); }
+    static std::variant<T...> load(SEXP value) {
+        std::optional<std::variant<T...>> result;
+        for (const bool strict : {true, false}) {
+            ((!result && Value<T>::check(value, strict) ? (void)result.emplace(std::in_place_type<T>, Value<T>::load(value)) : (void)0), ...);
+            if (result) return std::move(*result);
+        }
+        fail("value matches no alternative of the C++ variant");
+    }
+    static SEXP cast(const std::variant<T...>& value) {
+        return std::visit([](const auto& item) -> SEXP { return Value<std::remove_cv_t<std::remove_reference_t<decltype(item)>>>::cast(item); }, value);
+    }
+};
+template<class Rep, class Period> struct Value<std::chrono::duration<Rep, Period>> {
+    using D = std::chrono::duration<Rep, Period>;
+    static bool check(SEXP value, bool strict) { return Value<double>::check(value, strict); }
+    static D load(SEXP value) { return std::chrono::duration_cast<D>(std::chrono::duration<double>(Value<double>::load(value))); }
+    static SEXP cast(const D& value) { return Rf_ScalarReal(std::chrono::duration<double>(value).count()); }
+};
+)cpp",
+R"cpp(
+// ---------------------------------------------------------------- arguments
+// A rosetta_ref(): an environment whose `value` a mutable reference parameter reads and updates.
+inline SEXP ref_symbol() { static SEXP value = Rf_install("value"); return value; }
+inline bool is_ref(SEXP value) { return TYPEOF(value) == ENVSXP && Rf_inherits(value, "rosetta_ref"); }
+inline SEXP ref_value(SEXP ref) {
+    SEXP value = frame_variable(ref, ref_symbol());
+    return value ? value : R_NilValue;
+}
+template<class V, class = void> struct castable : std::false_type {};
+template<class V> struct castable<V, std::void_t<decltype(Value<V>::cast(std::declval<const V&>()))>> : std::true_type {};
+template<class P, class = void> struct Param {
+    using V = std::remove_cv_t<std::remove_reference_t<P>>;
+    static constexpr bool out = std::is_lvalue_reference_v<P> && !std::is_const_v<std::remove_reference_t<P>>;
+    static SEXP source(SEXP value) { return out && is_ref(value) ? ref_value(value) : value; }
+    static bool check(SEXP value, bool strict) { return Value<V>::check(source(value), strict); }
+    explicit Param(SEXP value) : value_(Value<V>::load(source(value))) {}
+    decltype(auto) get() {
+        if constexpr (std::is_lvalue_reference_v<P>) return static_cast<P>(value_);
+        else return static_cast<V&&>(value_);
+    }
+    // A mutable reference parameter passed a rosetta_ref() stores the updated value back in it.
+    void writeback(SEXP original) {
+        if constexpr (out && castable<V>::value) {
+            if (!is_ref(original)) return;
+            Protect updated(Value<V>::cast(value_));
+            Rf_defineVar(ref_symbol(), updated.get(), original);
+        } else (void)original;
+    }
+private:
+    V value_;
+};
+template<class P> struct Param<P, std::enable_if_t<bound_v<std::remove_reference_t<P>> && !std::is_pointer_v<P>>> {
+    using V = std::remove_cv_t<std::remove_reference_t<P>>;
+    static bool check(SEXP value, bool) { return is_instance<V>(value); }
+    explicit Param(SEXP value) : ptr_(native<V>(value)) {}
+    decltype(auto) get() {
+        if constexpr (std::is_rvalue_reference_v<P>) {
+            if constexpr (copyable_v<V>) { copy_.emplace(*ptr_); return static_cast<V&&>(*copy_); }
+            else return static_cast<V&&>(*ptr_);
+        } else if constexpr (std::is_lvalue_reference_v<P>) return static_cast<P>(*ptr_);
+        else return static_cast<V&>(*ptr_);
+    }
+private:
+    V* ptr_;
+    std::conditional_t<std::is_rvalue_reference_v<P> && copyable_v<V>, std::optional<V>, char> copy_{};
+};
+template<class P> struct Param<P, std::enable_if_t<std::is_pointer_v<P> && bound_v<std::remove_pointer_t<P>>>> {
+    using V = std::remove_cv_t<std::remove_pointer_t<P>>;
+    static bool check(SEXP value, bool) { return Rf_isNull(value) || is_instance<V>(value); }
+    explicit Param(SEXP value) : ptr_(Rf_isNull(value) ? nullptr : native<V>(value)) {}
+    P get() { return ptr_; }
+private:
+    V* ptr_;
+};
+template<> struct Param<const char*> {
+    static bool check(SEXP value, bool strict) { return Rf_isNull(value) || Value<std::string>::check(value, strict); }
+    explicit Param(SEXP value) { if (!Rf_isNull(value)) text_ = Value<std::string>::load(value); }
+    const char* get() { return text_ ? text_->c_str() : nullptr; }
+private:
+    std::optional<std::string> text_;
+};
+template<class P> struct Param<P, std::enable_if_t<std::is_same_v<std::remove_cv_t<std::remove_reference_t<P>>, std::string_view>>> {
+    static bool check(SEXP value, bool strict) { return Value<std::string>::check(value, strict); }
+    explicit Param(SEXP value) : text_(Value<std::string>::load(value)) {}
+    std::string_view get() { return text_; }
+private:
+    std::string text_;
+};
+
+// Positional and named R arguments (a list) mapped onto one overload's parameters.
+inline bool collect(SEXP args, const char* const* names, R_xlen_t count, R_xlen_t required, SEXP* out, R_xlen_t* used) {
+    const R_xlen_t given = XLENGTH(args);
+    SEXP labels = Rf_getAttrib(args, R_NamesSymbol);
+    for (R_xlen_t i = 0; i < count; ++i) out[i] = nullptr;
+    R_xlen_t position = 0;
+    for (R_xlen_t i = 0; i < given; ++i) {
+        const char* label = TYPEOF(labels) == STRSXP ? CHAR(STRING_ELT(labels, i)) : "";
+        if (label[0]) {
+            R_xlen_t found = -1;
+            for (R_xlen_t j = 0; j < count; ++j) if (names[j] && std::strcmp(names[j], label) == 0) { found = j; break; }
+            if (found < 0 || out[found]) return false;
+            out[found] = VECTOR_ELT(args, i);
+        } else {
+            while (position < count && out[position]) ++position;
+            if (position >= count) return false;
+            out[position++] = VECTOR_ELT(args, i);
+        }
+    }
+    R_xlen_t last = 0;
+    for (R_xlen_t i = 0; i < count; ++i) if (out[i]) last = i + 1;
+    for (R_xlen_t i = 0; i < last; ++i) if (!out[i]) return false; // C++ defaults cannot skip a middle argument
+    if (last < required) return false;
+    *used = last;
+    return true;
+}
+[[noreturn]] inline void no_overload(const char* name, const char* signatures, SEXP args) {
+    std::string received;
+    SEXP labels = Rf_getAttrib(args, R_NamesSymbol);
+    for (R_xlen_t i = 0; i < XLENGTH(args); ++i) {
+        const char* label = TYPEOF(labels) == STRSXP ? CHAR(STRING_ELT(labels, i)) : "";
+        SEXP value = VECTOR_ELT(args, i);
+        std::string type = type_name(value);
+        if (sequence_like(value) && !Rf_isNull(value) && TYPEOF(value) != VECSXP && XLENGTH(value) != 1)
+            type += "[" + std::to_string(static_cast<long long>(XLENGTH(value))) + "]";
+        received += std::string(i ? ", " : "") + (label[0] ? std::string(label) + " = " : "") + type;
+    }
+    fail(std::string(name) + "(): incompatible arguments (" + received + "); supported signatures:\n" + signatures);
+}
+
+// ---------------------------------------------------------------- results
+enum class Return { automatic, copy, owned, borrowed };
+inline bool same_object(SEXP parent, void* ptr, TypeInfo* info) {
+    auto* holder = parent ? holder_of(parent) : nullptr;
+    return holder && holder->ptr && cast_path(holder->ptr, holder->info, info) == ptr;
+}
+inline SEXP keepalive(SEXP parent) { return parent ? pointer_of(parent) : nullptr; }
+template<class R> SEXP result(R&& value, SEXP parent, Return policy) {
+    using Q = std::remove_reference_t<R>;
+    using V = std::remove_cv_t<Q>;
+    if constexpr (std::is_pointer_v<V> && bound_v<std::remove_pointer_t<V>>) {
+        using B = std::remove_cv_t<std::remove_pointer_t<V>>;
+        B* ptr = const_cast<B*>(value);
+        if (!ptr) return R_NilValue;
+        if (same_object(parent, ptr, &Info<B>::value)) return parent;
+        if (policy == Return::owned) return wrap(ptr, Ownership::owned, nullptr);
+        if (policy == Return::copy) {
+            if constexpr (copyable_v<B>) return wrap(new B(*ptr), Ownership::owned, nullptr);
+            else fail("C++ result is not copyable");
+        }
+        return wrap(ptr, Ownership::borrowed, keepalive(parent));
+    } else if constexpr (bound_v<V> && std::is_lvalue_reference_v<R>) {
+        V* ptr = const_cast<V*>(&value);
+        if (same_object(parent, ptr, &Info<V>::value)) return parent;
+        if (policy == Return::copy || policy == Return::owned) {
+            if constexpr (copyable_v<V>) return wrap(new V(value), Ownership::owned, nullptr);
+            else fail("C++ result is not copyable");
+        }
+        return wrap(ptr, Ownership::borrowed, keepalive(parent));
+    } else if constexpr (bound_v<V>) {
+        return Value<V>::cast(std::move(value));
+    } else if constexpr (std::is_same_v<V, char*> || std::is_same_v<V, const char*>) {
+        return Value<const char*>::cast(value);
+    } else if constexpr (std::is_lvalue_reference_v<R>) {
+        return Value<V>::cast(static_cast<const V&>(value));
+    } else {
+        return Value<V>::cast(std::move(value));
+    }
+}
+template<class F> SEXP call(F&& function, SEXP parent, Return policy) {
+    using R = decltype(function());
+    if constexpr (std::is_void_v<R>) { function(); return R_NilValue; }
+    else return result<R>(function(), parent, policy);
+}
+template<class T, class V> void assign_field(T& target, V&& value) {
+    if constexpr (std::is_copy_assignable_v<T>) target = std::forward<V>(value);
+    else fail("field type is not assignable");
+}
+
+// ---------------------------------------------------------------- C++ -> R calls
+template<class A> SEXP argument(A&& value) {
+    using V = std::remove_cv_t<std::remove_reference_t<A>>;
+    if constexpr (bound_v<V>) {
+        if constexpr (std::is_lvalue_reference_v<A>) return wrap(const_cast<V*>(&value), Ownership::borrowed, nullptr);
+        else return Value<V>::cast(std::move(value));
+    } else if constexpr (std::is_pointer_v<V> && bound_v<std::remove_pointer_t<V>>) {
+        return wrap(const_cast<std::remove_cv_t<std::remove_pointer_t<V>>*>(value), Ownership::borrowed, nullptr);
+    } else if constexpr (std::is_same_v<V, char*> || std::is_same_v<V, const char*>) {
+        return Value<const char*>::cast(value);
+    } else {
+        return Value<V>::cast(value);
+    }
+}
+template<class R> R returned(SEXP value) {
+    if constexpr (std::is_void_v<R>) { (void)value; }
+    else {
+        using V = std::remove_cv_t<std::remove_reference_t<R>>;
+        if constexpr (std::is_lvalue_reference_v<R> && bound_v<V>) return *native<V>(value);
+        else if constexpr (std::is_pointer_v<V> && bound_v<std::remove_pointer_t<V>>) return Value<V>::load(value);
+        else {
+            if (!Value<V>::check(value, false)) fail("R callback returned " + type_name(value) + ", which does not convert to the C++ result type");
+            return Value<V>::load(value);
+        }
+    }
+}
+template<class R, class... A> R invoke_r(SEXP function, A&&... arguments) {
+    Protect call(Rf_allocVector(LANGSXP, static_cast<R_xlen_t>(sizeof...(A) + 1)));
+    SETCAR(call.get(), function);
+    SEXP cell = CDR(call.get());
+    ((SETCAR(cell, argument<A>(std::forward<A>(arguments))), cell = CDR(cell)), ...);
+    Protect value(eval(call.get(), R_GlobalEnv));
+    if constexpr (std::is_void_v<R>) return;
+    else return returned<R>(value.get());
+}
+// A native std::function returned to R: an R closure calling back through rosetta_invoke.
+struct Callable { std::function<SEXP(SEXP)> call; };
+inline void finalize_callable(SEXP pointer) {
+    delete static_cast<Callable*>(R_ExternalPtrAddr(pointer));
+    R_ClearExternalPtr(pointer);
+}
+template<class R, class... A, std::size_t... I>
+SEXP invoke_native(const std::function<R(A...)>& function, SEXP args, std::index_sequence<I...>) {
+    if (XLENGTH(args) != static_cast<R_xlen_t>(sizeof...(A))) fail("wrong number of arguments for native callable");
+    std::tuple<Param<A>...> params{Param<A>(VECTOR_ELT(args, I))...};
+    return call([&]() -> decltype(auto) { return function(std::get<I>(params).get()...); }, nullptr, Return::copy);
+}
+template<class R, class... A> struct Value<std::function<R(A...)>> {
+    using F = std::function<R(A...)>;
+    static bool check(SEXP value, bool) { return Rf_isNull(value) || Rf_isFunction(value); }
+    static F load(SEXP value) {
+        if (Rf_isNull(value)) return {};
+        if (!Rf_isFunction(value)) fail("expected a function, got " + type_name(value));
+        auto target = std::make_shared<Keeper>(value);
+        return [target](A... arguments) -> R { return invoke_r<R, A...>(target->value, std::forward<A>(arguments)...); };
+    }
+    static SEXP cast(const F& value) {
+        if (!value) return R_NilValue;
+        auto* callable = new Callable{[value](SEXP args) { return invoke_native(value, args, std::index_sequence_for<A...>{}); }};
+        Protect pointer(R_MakeExternalPtr(callable, R_NilValue, R_NilValue));
+        R_RegisterCFinalizerEx(pointer.get(), finalize_callable, TRUE);
+        Protect make(Rf_lang2(Rf_install(".rosetta_callable"), pointer.get()));
+        return eval(make.get(), environment());
+    }
+};
+inline SEXP invoke_callable(SEXP pointer, SEXP args) {
+    auto* callable = TYPEOF(pointer) == EXTPTRSXP ? static_cast<Callable*>(R_ExternalPtrAddr(pointer)) : nullptr;
+    if (!callable) fail("native callable is no longer available");
+    return callable->call(args);
+}
+inline SEXP release_object(SEXP self) {
+    SEXP pointer = pointer_of(self);
+    if (!pointer) return R_NilValue;
+    auto* holder = static_cast<Holder*>(R_ExternalPtrAddr(pointer));
+    R_ClearExternalPtr(pointer);
+    release(holder);
+    return R_NilValue;
+}
+} } // ROSETTA_R_MODULE::rosetta_r
+)cpp"};
+} // namespace rosetta::detail

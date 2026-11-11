@@ -133,6 +133,7 @@ private:
     std::map<std::string, ClassPlan> classes_;      // by qualified name
     std::vector<std::string> class_order_;
     std::map<std::string, std::string> template_names_; // specialization -> Python name
+    std::map<std::string, std::string> function_template_names_; // function specialization -> Python name
     std::set<std::string> extension_functions_;
     std::map<std::string, const Enumeration*> enums_;
     std::size_t next_ = 0;
@@ -176,7 +177,8 @@ private:
         return {};
     }
     std::map<std::string, bool> copyable_cache_;
-    bool copyable_record(const std::string& name, unsigned depth = 0);
+    // as_base: copied as a base subobject, where abstractness does not matter.
+    bool copyable_record(const std::string& name, unsigned depth = 0, bool as_base = false);
     bool copyable_type(const Type& type, unsigned depth);
     std::string value_problem(const Type& type, Use use) const;
     std::string type_problem(const Type& type, Use use) const;
@@ -186,6 +188,20 @@ private:
     std::string documentation(const std::vector<Overload>& overloads, const std::string& python) const;
     std::string return_policy(const Function& function) const;
     std::string class_python_name(const Record& record) const;
+    // A reference (or field) of a policy copy type is returned as a copy.
+    bool copy_type(const Type& type) const {
+        if (type.kind == TypeKind::pointer || type.kind == TypeKind::rvalue_reference) return false;
+        const auto& target = referent(type);
+        return target.kind == TypeKind::record && policy_.copy_types.count(target.declaration) != 0;
+    }
+    // Flat naming applies unless the policy qualifies the declaring namespace.
+    bool flat(const std::vector<std::string>& namespaces) const {
+        if (!flat_) return false;
+        std::string scope;
+        for (const auto& part : namespaces) scope += (scope.empty() ? "" : "::") + part;
+        for (const auto& pattern : policy_.qualify) if (policy_match(pattern, scope)) return false;
+        return true;
+    }
     void plan_classes();
     void plan_directors();
     std::vector<const Function*> virtuals(const Record& record, std::map<std::string, bool>& pure) const;
@@ -219,12 +235,24 @@ bool Generator::copyable_type(const Type& type, unsigned depth) {
     }
     return true;
 }
-bool Generator::copyable_record(const std::string& name, unsigned depth) {
+bool Generator::copyable_record(const std::string& name, unsigned depth, bool as_base) {
+    const auto found = records_.find(name);
+    if (as_base && found != records_.end() && found->second->abstract) {
+        // An abstract base copies like a concrete one: check its members alone.
+        const auto& record = *found->second;
+        for (const auto& constructor : record.constructors)
+            if (constructor.parameters.size() == 1 && constructor.parameters[0].kind == TypeKind::lvalue_reference &&
+                referent(constructor.parameters[0]).declaration == name && (constructor.is_deleted || constructor.access == "private"))
+                return false;
+        for (const auto& field : record.fields) if (!copyable_type(field.type, depth + 1)) return false;
+        for (const auto& base : record.bases)
+            if (!copyable_record(base.type.declaration.empty() ? base.type.canonical : base.type.declaration, depth + 1, true)) return false;
+        return true;
+    }
     const auto cached = copyable_cache_.find(name);
     if (cached != copyable_cache_.end()) return cached->second;
-    const auto found = records_.find(name);
     if (found == records_.end() || depth > 32) return true;
-    copyable_cache_[name] = true; // provisional for recursive types
+    copyable_cache_[name] = true; // provisional for recursive types // provisional for recursive types
     const auto& record = *found->second;
     bool result = !record.abstract;
     bool copy_declared = false, move_declared = false;
@@ -240,7 +268,7 @@ bool Generator::copyable_record(const std::string& name, unsigned depth) {
     if (move_declared && !copy_declared) result = false; // implicitly deleted copy constructor
     for (const auto& field : record.fields) if (result && !copyable_type(field.type, depth + 1)) result = false;
     for (const auto& base : record.bases)
-        if (result && !copyable_record(base.type.declaration.empty() ? base.type.canonical : base.type.declaration, depth + 1)) result = false;
+        if (result && !copyable_record(base.type.declaration.empty() ? base.type.canonical : base.type.declaration, depth + 1, true)) result = false;
     copyable_cache_[name] = result;
     return result;
 }
@@ -375,7 +403,7 @@ std::string Generator::display(const Type& type) const {
         const auto found = enums_.find(target.declaration);
         if (found != enums_.end()) {
             const auto& enumeration = *found->second;
-            return renamed(enumeration.qualified_name(), flat_ ? enumeration.name : exported(enumeration.qualified_name()));
+            return renamed(enumeration.qualified_name(), flat(enumeration.namespaces) ? enumeration.name : exported(enumeration.qualified_name()));
         }
         return "int";
     }
@@ -448,7 +476,8 @@ std::string Generator::documentation(const std::vector<Overload>& overloads, con
 std::string Generator::return_policy(const Function& function) const {
     auto found = policy_.returns.find(function.identity());
     if (found == policy_.returns.end()) found = policy_.returns.find(function.qualified_name());
-    if (found == policy_.returns.end()) return "rosetta_py::Return::automatic";
+    if (found == policy_.returns.end())
+        return copy_type(function.result) ? "rosetta_py::Return::copy" : "rosetta_py::Return::automatic";
     return "rosetta_py::Return::" + found->second;
 }
 
@@ -457,7 +486,7 @@ std::string Generator::class_python_name(const Record& record) const {
     const auto instantiated = template_names_.find(qualified);
     if (instantiated != template_names_.end()) return renamed(qualified, instantiated->second);
     if (!record.owner.empty()) return renamed(qualified, keyword_safe(record.name));
-    return renamed(qualified, keyword_safe(flat_ ? record.name : exported(qualified)));
+    return renamed(qualified, keyword_safe(flat(record.namespaces) ? record.name : exported(qualified)));
 }
 
 void Generator::plan_classes() {
@@ -465,8 +494,15 @@ void Generator::plan_classes() {
         const auto found = std::find_if(module_.records.begin(), module_.records.end(), [&](const Record& record) {
             return !record.template_name.empty() && normalize(record.qualified_name()) == normalize(requested.second);
         });
-        if (found == module_.records.end()) { reject(requested.second, "template instantiation was not exported by the frontend"); continue; }
         if (!python_identifier(requested.first)) throw BindingError("template binding name is not an identifier: " + requested.first);
+        if (found == module_.records.end()) {
+            const auto function = std::find_if(module_.functions.begin(), module_.functions.end(), [&](const Function& f) {
+                return !f.template_name.empty() && normalize(f.qualified_name()) == normalize(requested.second);
+            });
+            if (function == module_.functions.end()) { reject(requested.second, "template instantiation was not exported by the frontend"); continue; }
+            function_template_names_[function->qualified_name()] = requested.first;
+            continue;
+        }
         template_names_[found->qualified_name()] = requested.first;
     }
     for (const auto& selection : policy_.classes)
@@ -945,8 +981,8 @@ GeneratedPythonSource Generator::run() {
             const auto qualified = owner + "::" + field.name;
             if (excluded(qualified)) continue;
             auto why = type_problem(field.type, Use::result);
-            if (field.type.kind == TypeKind::pointer || field.type.kind == TypeKind::lvalue_reference || field.type.kind == TypeKind::rvalue_reference)
-                why = field.type.kind == TypeKind::pointer ? why : "reference fields are unsupported";
+            // Lvalue reference fields are read-only and borrow from their owner, like reference results.
+            if (field.type.kind == TypeKind::rvalue_reference) why = "rvalue reference fields are unsupported";
             if (field.bitfield || field.type.is_volatile) why = "unsupported Python field type";
             if (field.type.canonical.find('[') != std::string::npos) why = "array fields are unsupported";
             if (!why.empty()) { reject(qualified, why.rfind("unsupported Python field type", 0) == 0 ? why : "unsupported Python field type: " + why); continue; }
@@ -964,7 +1000,10 @@ GeneratedPythonSource Generator::run() {
         if (excluded(function.qualified_name(), function.identity())) continue;
         auto why = function_problem(function, false);
         if (!why.empty()) { reject(function.qualified_name(), why); continue; }
-        const auto python = renamed(function.qualified_name(), keyword_safe(flat_ ? function.name : exported(function.qualified_name())));
+        const auto specialization = function_template_names_.find(function.qualified_name());
+        if (!function.template_name.empty() && specialization == function_template_names_.end()) continue;
+        const auto python = specialization != function_template_names_.end() ? specialization->second
+            : renamed(function.qualified_name(), keyword_safe(flat(function.namespaces) ? function.name : exported(function.qualified_name())));
         const auto found = function_index.find(python);
         if (found == function_index.end()) {
             function_index[python] = functions.size();
@@ -1056,7 +1095,7 @@ GeneratedPythonSource Generator::run() {
                 << "    return rosetta_py::guard<PyObject*>([&]() -> PyObject* {\n"
                 << "        auto* native = rosetta_py::native<" << owner << ">(self);\n"
                 << "        return rosetta_py::result<decltype((native->" << field->name << "))>(native->" << field->name
-                << ", self, rosetta_py::Return::automatic);\n    }, nullptr);\n}\n";
+                << ", self, rosetta_py::Return::" << (copy_type(field->type) ? "copy" : "automatic") << ");\n    }, nullptr);\n}\n";
             const bool writable = !field->type.is_const && !readonly(qualified, owner) && field->type.kind != TypeKind::lvalue_reference;
             if (writable)
                 unit << "static int " << field_symbol << "_set(PyObject* self, PyObject* value, void*) {\n"
@@ -1065,8 +1104,10 @@ GeneratedPythonSource Generator::run() {
                     << "        auto* native = rosetta_py::native<" << owner << ">(self);\n"
                     << "        rosetta_py::Param<const std::remove_cv_t<std::remove_reference_t<decltype(native->" << field->name
                     << ")>>&> converted(value);\n"
-                    << "        native->" << field->name << " = converted.get();\n        return 0;\n    }, -1);\n}\n";
-            getset << "    {" << quote(python) << ", " << field_symbol << "_get, " << (writable ? field_symbol + "_set" : "nullptr")
+                    << "        rosetta_py::assign_field(native->" << field->name << ", converted.get());\n        return 0;\n    }, -1);\n}\n";
+            const auto setter = writable ? "std::is_copy_assignable_v<std::remove_cv_t<decltype(" + owner + "::" + field->name + ")>> ? "
+                + field_symbol + "_set : nullptr" : std::string("nullptr");
+            getset << "    {" << quote(python) << ", " << field_symbol << "_get, " << setter
                    << ", " << quote(field->doc) << ", nullptr},\n";
         }
         const auto init_symbol = plan.constructors.empty() ? std::string("rosetta_py::abstract_init") : emit_constructor(unit, plan);
@@ -1129,7 +1170,7 @@ GeneratedPythonSource Generator::run() {
         const auto qualified = enumeration.qualified_name();
         if (!enums_.count(qualified)) continue;
         const bool nested = !enumeration.owner.empty();
-        const auto python = renamed(qualified, keyword_safe(nested || flat_ ? enumeration.name : exported(qualified)));
+        const auto python = renamed(qualified, keyword_safe(nested || flat(enumeration.namespaces) ? enumeration.name : exported(qualified)));
         std::string qualname = python;
         if (nested) qualname = classes_.at(enumeration.owner).qualname + "." + python;
         if (!nested) {
@@ -1157,7 +1198,7 @@ GeneratedPythonSource Generator::run() {
         if (flat_) {
             for (const auto& enumerator : enumeration.enumerators) {
                 const auto member = renamed(qualified + "::" + enumerator, keyword_safe(enumerator));
-                const auto constant = enumeration.scoped ? renamed(qualified + "::" + enumerator, enumeration.name + "_" + keyword_safe(enumerator)) : member;
+                const auto constant = enumeration.scoped ? renamed(qualified + "::" + enumerator, python + "_" + keyword_safe(enumerator)) : member;
                 if (!nested && !enumeration.scoped) {
                     if (names.count(constant)) { reject(qualified + "::" + enumerator, "enumerator name collides with another export"); continue; }
                     reserve(constant, "enumerator " + qualified + "::" + enumerator);
@@ -1180,7 +1221,7 @@ GeneratedPythonSource Generator::run() {
         if (!why.empty() || variable.type.kind == TypeKind::pointer || variable.type.kind == TypeKind::lvalue_reference) {
             reject(qualified, why.empty() ? "pointer and reference constants are unsupported" : why); continue;
         }
-        const auto python = renamed(qualified, keyword_safe(flat_ ? variable.name : exported(qualified)));
+        const auto python = renamed(qualified, keyword_safe(flat(variable.namespaces) ? variable.name : exported(qualified)));
         if (names.count(python)) { reject(qualified, "constant name collides with another export"); continue; }
         reserve(python, "constant " + qualified);
         init << "        rosetta_py::add_object(module, " << quote(python) << ", rosetta_py::Value<std::remove_cv_t<decltype(::" << qualified
@@ -1220,7 +1261,9 @@ GeneratedPythonSource Generator::run() {
         << ", static_cast<int>(sizeof(rosetta_py::Instance)), 0, Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC, rosetta_py::root_slots};\n"
         << "static PyType_Spec rosetta_callable_spec = {" << quote(name_ + "._NativeCallable")
         << ", static_cast<int>(sizeof(rosetta_py::Callable)), 0, Py_TPFLAGS_DEFAULT, rosetta_py::callable_slots};\n"
-        << "static PyMethodDef rosetta_functions[] = {\n" << module_methods.str() << "    {nullptr, nullptr, 0, nullptr}};\n"
+        << "static PyMethodDef rosetta_functions[] = {\n" << module_methods.str()
+        << "    {\"_set_doc\", rosetta_py::set_doc, METH_VARARGS, \"_set_doc(obj, text)\\n--\\n\\nSet obj.__doc__, including for this module's (read-only) functions and methods.\"},\n"
+        << "    {nullptr, nullptr, 0, nullptr}};\n"
         << "static int rosetta_exec(PyObject* module) {\n    return rosetta_py::guard<int>([&]() -> int {\n" << init.str()
         << "        return 0;\n    }, -1);\n}\n"
         << "static PyModuleDef_Slot rosetta_slots[] = {\n{Py_mod_exec, reinterpret_cast<void*>(&rosetta_exec)},\n"

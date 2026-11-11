@@ -55,8 +55,9 @@ Generate native language bindings from a C++ header.
   --policy PATH          Explicit class selection and lifetime policy (JSON)
   --scope PATH           Also export declarations from this header or directory (repeatable)
   --skip-function-bodies Parse declarations only (faster for large libraries)
-  --python-parts N       Split Python output over N sources: OUTPUT holds module init, the
-                         rest go to OUTPUT's stem + _1.._N-1 (compile them in parallel)
+  --python-parts N, --parts N  Split Python or R6 output over N sources: OUTPUT holds module
+                         init, the rest go to OUTPUT's stem + _1.._N-1 (compile them in parallel)
+  --r-package            R6 interface as R package code (useDynLib registration, .onLoad hook)
   --include-as SPELLING  #include spelling for HEADER in generated code (default: its path)
   --compile-commands PATH  Compilation database file or build directory
   --translation-unit PATH  Select the source command supplying parser flags
@@ -76,7 +77,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         std::optional<std::size_t> command_index;
         std::vector<std::string> extra_flags;
         std::vector<std::filesystem::path> scopes;
-        bool skip = false, skip_bodies = false;
+        bool skip = false, skip_bodies = false, r_package = false;
         for (std::size_t i = 0; i < arguments.size(); ++i) {
             const auto& arg = arguments[i];
             if (arg == "--") {
@@ -86,6 +87,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             if (arg == "--help" || arg == "-h") { out << usage; return 0; }
             if (arg == "--skip-unsupported") { skip = true; continue; }
             if (arg == "--skip-function-bodies") { skip_bodies = true; continue; }
+            if (arg == "--r-package") { r_package = true; continue; }
             if (arg == "--scope") {
                 if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
                     throw BindingError("missing value for " + arg);
@@ -94,13 +96,13 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             }
             if (arg == "--module" || arg == "--output" || arg == "-o" || arg == "--clang" ||
                 arg == "--dump-ir" || arg == "--depfile" || arg == "--policy" || arg == "--language" || arg == "--compile-commands" ||
-                arg == "--translation-unit" || arg == "--command-index" || arg == "--object-system" || arg == "--r-output" || arg == "--julia-output" || arg == "--java-output" || arg == "--java-package" || arg == "--csharp-output" || arg == "--csharp-namespace" || arg == "--fortran-output" || arg == "--lisp-output" || arg == "--guile-output" || arg == "--ocaml-output" || arg == "--go-output" || arg == "--gnu-apl-output" || arg == "--dyalog-output" || arg == "--apl-library-dir" || arg == "--cobol-output" || arg == "--cobol-string-size" || arg == "--include-as" || arg == "--python-parts") {
+                arg == "--translation-unit" || arg == "--command-index" || arg == "--object-system" || arg == "--r-output" || arg == "--julia-output" || arg == "--java-output" || arg == "--java-package" || arg == "--csharp-output" || arg == "--csharp-namespace" || arg == "--fortran-output" || arg == "--lisp-output" || arg == "--guile-output" || arg == "--ocaml-output" || arg == "--go-output" || arg == "--gnu-apl-output" || arg == "--dyalog-output" || arg == "--apl-library-dir" || arg == "--cobol-output" || arg == "--cobol-string-size" || arg == "--include-as" || arg == "--python-parts" || arg == "--parts") {
                 if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
                     throw BindingError("missing value for " + arg);
                 const auto& value = arguments[i];
                 if (arg == "--module") name = value;
                 else if (arg == "--include-as") include_as = value;
-                else if (arg == "--python-parts") {
+                else if (arg == "--python-parts" || arg == "--parts") {
                     const auto parsed = std::from_chars(value.data(), value.data() + value.size(), python_parts);
                     if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || python_parts == 0 || python_parts > 256)
                         throw BindingError("--python-parts must be an integer from 1 to 256");
@@ -144,7 +146,10 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         if (header.empty() || name.empty() || output.empty())
             throw BindingError("HEADER, --module and --output are required; use --help for usage");
         if (language != "lua" && language != "r" && language != "python" && language != "ruby" && language != "octave" && language != "julia" && language != "java" && language != "csharp" && language != "fortran" && language != "common-lisp" && language != "tcl" && language != "guile" && language != "ocaml" && language != "go" && language != "apl" && language != "cobol") throw BindingError("unsupported language: " + language);
-        if (language != "python" && python_parts != 1) throw BindingError("--python-parts requires --language python");
+        if (language != "python" && !(language == "r" && object_system != "s3" && object_system != "s4") && python_parts != 1)
+            throw BindingError("--parts requires --language python or r (R6)");
+        if (r_package && (language != "r" || object_system == "s3" || object_system == "s4"))
+            throw BindingError("--r-package requires --language r with the R6 object system");
         if (language != "r" && (!object_system.empty() || !r_output.empty()))
             throw BindingError("--object-system and --r-output require --language r");
         if (language == "r") {
@@ -286,8 +291,13 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         std::string language_interface, second_interface;
         if (language == "r") {
             const auto system = object_system == "s3" ? RObjectSystem::s3 : object_system == "s4" ? RObjectSystem::s4 : RObjectSystem::r6;
-            const auto r = generate_r(module, name, system, skip, policy);
+            const auto r = generate_r(module, name, system, skip, policy, r_package, python_parts);
             generated = {r.source, r.diagnostics};
+            for (std::size_t i = 0; i < r.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, r.parts[i]);
+            }
             language_interface = r.interface;
         } else if (language == "python") {
             const auto python = generate_python(module, name, skip, policy, python_parts);

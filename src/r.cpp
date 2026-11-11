@@ -56,7 +56,9 @@ std::string function_problem(const Function& fn) {
 } // namespace
 
 GeneratedRSource generate_r(const Module& module, const std::string& name, RObjectSystem object_system,
-                            bool skip_unsupported, const BindingPolicy& policy) {
+                            bool skip_unsupported, const BindingPolicy& policy, bool package, std::size_t parts) {
+    if (object_system == RObjectSystem::r6) return detail::generate_r6(module, name, skip_unsupported, policy, package, parts);
+    if (package || parts != 1) throw BindingError("R package output and split sources require the R6 object system");
     if (object_system != RObjectSystem::r6 && object_system != RObjectSystem::s3 && object_system != RObjectSystem::s4)
         throw BindingError("unsupported R object system");
     const bool r6 = object_system == RObjectSystem::r6;

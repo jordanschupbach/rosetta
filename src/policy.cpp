@@ -29,7 +29,7 @@ BindingPolicy load_policy(const std::filesystem::path& path) {
     try {
         const auto root = Json::parse(detail::read_file(path));
         keys(root, {"version", "classes", "callbacks", "enums", "select", "exclude", "rename", "templates", "extend",
-                    "returns", "readonly", "docs", "convert", "names", "sequences", "directors", "scope", "exceptions"}, "policy");
+                    "returns", "readonly", "docs", "convert", "names", "sequences", "directors", "scope", "exceptions", "qualify", "copy_types"}, "policy");
         if (!root.contains("version") || !root["version"].is_number_integer() || root["version"] != 1)
             throw BindingError("policy version must be 1");
         BindingPolicy policy;
@@ -66,6 +66,9 @@ BindingPolicy load_policy(const std::filesystem::path& path) {
             policy.select_all = true;
         }
         if (root.contains("exclude")) policy.exclude = list(root["exclude"], "policy exclude");
+        if (root.contains("qualify")) policy.qualify = list(root["qualify"], "policy qualify");
+        if (root.contains("copy_types"))
+            for (const auto& type : list(root["copy_types"], "policy copy_types")) policy.copy_types.insert(type);
         if (root.contains("scope"))
             for (const auto& item : list(root["scope"], "policy scope")) {
                 const std::filesystem::path scope(item);

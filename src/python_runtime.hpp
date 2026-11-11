@@ -14,6 +14,13 @@ struct python_error {};
     throw python_error{};
 }
 [[noreturn]] inline void fail(PyObject* type, const std::string& message) { fail(type, message.c_str()); }
+
+// Field setters: members whose type cannot be assigned (reference or const members)
+// are exported read-only, so this branch only guards direct calls.
+template <class T, class V> void assign_field(T& target, V&& value) {
+    if constexpr (std::is_copy_assignable_v<T>) target = std::forward<V>(value);
+    else fail(PyExc_AttributeError, "native field type cannot be assigned");
+}
 inline void check_error() { if (PyErr_Occurred()) throw python_error{}; }
 inline PyObject* checked(PyObject* value) { if (!value) throw python_error{}; return value; }
 template<class R, class F> R guard(F fn, R failure) noexcept {
@@ -668,6 +675,22 @@ template<class C, class E> struct Sequence {
     }
 };
 template<class E, class A> struct Value<std::vector<E, A>> : Sequence<std::vector<E, A>, E> {};
+// Byte vectors also accept bytes and bytearray.
+template<class A> struct Value<std::vector<unsigned char, A>> : Sequence<std::vector<unsigned char, A>, unsigned char> {
+    using Base = Sequence<std::vector<unsigned char, A>, unsigned char>;
+    static bool check(PyObject* value, bool strict) {
+        return PyBytes_Check(value) || PyByteArray_Check(value) || Base::check(value, strict);
+    }
+    static std::vector<unsigned char, A> load(PyObject* value) {
+        if (PyBytes_Check(value) || PyByteArray_Check(value)) {
+            const auto* data = reinterpret_cast<const unsigned char*>(
+                PyBytes_Check(value) ? PyBytes_AS_STRING(value) : PyByteArray_AS_STRING(value));
+            const auto size = static_cast<std::size_t>(PyBytes_Check(value) ? PyBytes_GET_SIZE(value) : PyByteArray_GET_SIZE(value));
+            return std::vector<unsigned char, A>(data, data + size);
+        }
+        return Base::load(value);
+    }
+};
 template<class E, class A> struct Value<std::deque<E, A>> : Sequence<std::deque<E, A>, E> {};
 template<class E, class A> struct Value<std::list<E, A>> : Sequence<std::list<E, A>, E> {};
 template<class E> struct Value<std::set<E>> : Sequence<std::set<E>, E> {
@@ -1157,6 +1180,36 @@ inline ModuleState* state(PyObject* module) { return static_cast<ModuleState*>(P
 inline void keep(PyObject* module, PyObject* type) {
     if (PyList_Append(state(module)->types, type) < 0) throw python_error{};
 }
+// _set_doc(obj, text): `obj.__doc__ = text` that also works for this module's functions and
+// methods, whose builtin __doc__ is read-only: their method definition's text is replaced.
+inline PyObject* set_doc(PyObject* module, PyObject* args) {
+    PyObject* target = nullptr;
+    PyObject* text = nullptr;
+    if (!PyArg_ParseTuple(args, "OU:_set_doc", &target, &text)) return nullptr;
+    if (PyObject_SetAttrString(target, "__doc__", text) == 0) Py_RETURN_NONE;
+    if (!PyErr_ExceptionMatches(PyExc_AttributeError) && !PyErr_ExceptionMatches(PyExc_TypeError)) return nullptr;
+    PyErr_Clear();
+    PyMethodDef* definition = nullptr;
+    if (PyCFunction_Check(target)) {
+        // Module functions are bound to the module; static methods to their class.
+        PyObject* self = reinterpret_cast<PyCFunctionObject*>(target)->m_self;
+        if (self == module || (self && PyType_Check(self) && root_type() &&
+                               PyType_IsSubtype(reinterpret_cast<PyTypeObject*>(self), root_type())))
+            definition = reinterpret_cast<PyCFunctionObject*>(target)->m_ml;
+    }
+    if (!definition && Py_IS_TYPE(target, &PyMethodDescr_Type) && root_type() &&
+             PyType_IsSubtype(PyDescr_TYPE(target), root_type()))
+        definition = reinterpret_cast<PyMethodDescrObject*>(target)->d_method;
+    if (!definition) {
+        PyErr_SetString(PyExc_TypeError, "_set_doc: the object's __doc__ is read-only and it is not a function of this module");
+        return nullptr;
+    }
+    const char* utf8 = PyUnicode_AsUTF8(text);
+    if (!utf8) return nullptr;
+    try { keep(module, text); } catch (const python_error&) { return nullptr; }  // owns the text
+    definition->ml_doc = utf8;
+    Py_RETURN_NONE;
+}
 inline void install_vector_types(PyObject* module) {
     static const char* source = R"py(
 class _Vector(list):
@@ -1181,6 +1234,13 @@ class _Vector(list):
     def resize(self, count, value=None):
         del self[count:]
         self.extend([value] * (count - len(self)))
+    # Equal to a tuple of the same items, as SWIG's tuple results were.
+    def __eq__(self, other):
+        return list.__eq__(self, list(other)) if isinstance(other, tuple) else list.__eq__(self, other)
+    def __ne__(self, other):
+        equal = self.__eq__(other)
+        return equal if equal is NotImplemented else not equal
+    __hash__ = None
     def __repr__(self): return type(self).__name__ + "(" + list.__repr__(self) + ")"
 
 class _Pair(tuple):

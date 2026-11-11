@@ -138,8 +138,10 @@ bool has_attribute(const Json& node, const char* kind) {
 
 class AstReader {
 public:
-    AstReader(std::string header, std::vector<std::string> scopes, std::vector<std::string> instantiations)
-        : scopes_(std::move(scopes)), instantiations_(std::move(instantiations)) {
+    AstReader(std::string header, std::vector<std::string> scopes, std::vector<std::string> instantiations,
+              std::set<std::string> function_instantiations = {})
+        : scopes_(std::move(scopes)), instantiations_(std::move(instantiations)),
+          function_instantiations_(std::move(function_instantiations)) {
         module_.header = std::move(header);
         const auto text = detail::read_file(module_.header);
         line_starts_.push_back(0);
@@ -163,6 +165,9 @@ public:
                         function.unsupported_reason = "default calls with member template overloads require an explicit adapter";
             }
         }
+        for (const auto& requested : function_instantiations_)
+            if (!instantiated_.count(requested))
+                module_.diagnostics.push_back(requested + ": requested template instantiation was not found");
         for (const auto& requested : instantiations_)
             if (!instantiated_.count(requested))
                 module_.diagnostics.push_back(requested + ": requested template instantiation was not found");
@@ -175,6 +180,7 @@ private:
     std::vector<std::string> scopes_;
     std::vector<std::string> instantiations_;
     std::set<std::string> instantiated_;
+    std::set<std::string> function_instantiations_;
     std::map<std::string, bool> owned_files_;
     std::string current_file_;
 
@@ -238,6 +244,7 @@ private:
     std::map<std::string, std::string> member_access_;
     std::map<std::string, std::set<std::string>> member_templates_;
     std::map<std::string, std::string> namespace_ids_, namespace_aliases_, type_ids_, function_ids_;
+    std::map<std::string, std::string> function_names_; // declaration id -> qualified name
     std::map<std::string, std::string> template_ids_, template_names_;
     std::set<std::string> namespace_names_;
     unsigned record_depth_ = 0;
@@ -309,6 +316,31 @@ private:
             throw BindingError("namespace alias expansion exceeds the frontend limit");
         }
         return {name, absolute};
+    }
+
+    // namespace short { using long_name::Thing; } in a selected header: Thing is also short::Thing.
+    void read_reexport(const Json& node, const std::vector<std::string>& namespaces, const SourceLocation& source) {
+        if (!node.contains("target")) return;
+        const auto& target = node.at("target");
+        const auto kind = target.value("kind", "");
+        const auto id = target.value("id", "");
+        std::string qualified, what;
+        if (kind == "CXXRecordDecl" || kind == "EnumDecl") {
+            const auto found = type_ids_.find(id);
+            if (found == type_ids_.end()) return;
+            qualified = found->second;
+            what = kind == "EnumDecl" ? "enum" : "record";
+        } else if (kind == "FunctionDecl") {
+            const auto found = function_names_.find(id);
+            if (found == function_names_.end()) return;
+            qualified = found->second;
+            what = "function";
+        } else return;
+        const auto name = target.value("name", "");
+        if (name.empty() || qualify(namespaces, name) == qualified) return;
+        for (const auto& existing : module_.reexports)
+            if (existing.namespaces == namespaces && existing.name == name && existing.target == qualified) return;
+        module_.reexports.push_back({namespaces, name, qualified, what, source});
     }
 
     void read_using(const Json& node, const std::vector<std::string>& scopes) {
@@ -704,7 +736,8 @@ private:
             for (auto& function : *functions)
                 if (function.default_arguments && member_templates.count(function.name))
                     function.unsupported_reason = "default calls with member template overloads require an explicit adapter";
-        if (record.complete && record.constructors.empty() && definition.value("defaultCtor", empty_object).value("exists", false)) {
+        if (record.complete && record.constructors.empty() && definition.value("defaultCtor", empty_object).value("exists", false) &&
+            implicit_default_constructible(children, scope)) {
             Function constructor;
             constructor.name = record.name;
             constructor.namespaces = scope;
@@ -797,6 +830,89 @@ private:
         }
     }
 
+    // Clang reports an implicit default constructor that C++ defines as deleted: a reference
+    // or const scalar member without an initializer, or a member without a default constructor.
+    bool implicit_default_constructible(const Json& children, const std::vector<std::string>& scope) {
+        for (const auto& child : children) {
+            if (child.value("kind", "") != "FieldDecl" || child.value("hasInClassInitializer", false)) continue;
+            const auto& type = child.at("type");
+            Type field{type.at("qualType").get<std::string>(), type.value("desugaredQualType", type.at("qualType").get<std::string>())};
+            resolve(field, scope);
+            if (field.kind == TypeKind::lvalue_reference || field.kind == TypeKind::rvalue_reference) return false;
+            if (field.is_const && field.kind != TypeKind::record) return false;
+            if (field.kind != TypeKind::record) continue;
+            const auto found = record_indices_.find(field.declaration);
+            if (found == record_indices_.end()) continue;
+            const auto& member = module_.records[found->second];
+            if (!member.complete) continue;
+            const bool has_default = std::any_of(member.constructors.begin(), member.constructors.end(), [](const Function& c) {
+                return c.parameters.size() == c.default_arguments && !c.is_deleted;
+            });
+            if (!has_default) return false;
+        }
+        return true;
+    }
+
+    // Requested function template specializations appear as FunctionDecl children of the
+    // template, each with its TemplateArgument list.
+    bool read_function_specializations(const Json& children, const std::vector<std::string>& namespaces,
+                                       const SourceLocation& source) {
+        bool found = false;
+        // The pattern (the template's own declaration) carries the default arguments.
+        std::size_t pattern_defaults = 0, pattern_parameters = 0;
+        for (const auto& child : children) {
+            if (child.value("kind", "") != "FunctionDecl") continue;
+            const auto& inner = child.contains("inner") ? child.at("inner") : empty_array;
+            if (std::any_of(inner.begin(), inner.end(), [](const Json& c) { return c.value("kind", "") == "TemplateArgument"; })) continue;
+            for (const auto& parameter : inner) {
+                if (parameter.value("kind", "") != "ParmVarDecl") continue;
+                ++pattern_parameters;
+                if (parameter.contains("init")) ++pattern_defaults;
+            }
+            break;
+        }
+        for (const auto& child : children) {
+            if (child.value("kind", "") != "FunctionDecl" || !child.contains("inner")) continue;
+            std::string arguments;
+            bool specialization = false;
+            for (const auto& argument : child.at("inner")) {
+                if (argument.value("kind", "") != "TemplateArgument") continue;
+                specialization = true;
+                if (argument.contains("type"))
+                    arguments += (arguments.empty() ? "" : ", ") +
+                        argument.at("type").value("desugaredQualType", argument.at("type").value("qualType", ""));
+                else if (argument.contains("value"))
+                    arguments += (arguments.empty() ? "" : ", ") +
+                        (argument.at("value").is_string() ? argument.at("value").get<std::string>() : argument.at("value").dump());
+                else { specialization = false; break; }
+            }
+            if (!specialization) continue;
+            const auto primary = qualify(namespaces, child.at("name").get<std::string>());
+            Type actual{primary + "<" + arguments + ">", {}};
+            actual.canonical = actual.spelling;
+            resolve(actual, {});
+            for (const auto& requested : function_instantiations_) {
+                if (instantiated_.count(requested)) continue;
+                Type wanted{requested, requested};
+                resolve(wanted, {});
+                if (wanted.canonical != actual.canonical) continue;
+                auto function = callable(child, namespaces, source);
+                // The call spells the specialization exactly as requested.
+                const auto open = requested.find('<');
+                function.name = child.at("name").get<std::string>() + requested.substr(open);
+                function.template_name = primary;
+                if (function.parameters.size() == pattern_parameters) function.default_arguments = pattern_defaults;
+                resolve(function.result, namespaces);
+                for (auto& parameter : function.parameters) resolve(parameter, namespaces);
+                instantiated_.insert(requested);
+                module_.functions.push_back(std::move(function));
+                found = true;
+                break;
+            }
+        }
+        return found;
+    }
+
     void walk(const Json& node, std::vector<std::string> namespaces, bool anonymous) {
         const auto& raw_loc = node.contains("loc") ? node.at("loc") : empty_object;
         advance_locations(raw_loc);
@@ -849,9 +965,11 @@ private:
         // selected for export. Mangled identities merge alias redeclarations.
         if (!anonymous && kind == "FunctionDecl" && node.contains("mangledName")) {
             function_ids_[node.at("id").get<std::string>()] = node.at("mangledName").get<std::string>();
+            function_names_[node.at("id").get<std::string>()] = qualify(namespaces, name);
             visible_overloads_[qualify(namespaces, name)].insert(node.at("mangledName").get<std::string>());
         }
         if (!anonymous) read_using(node, namespaces);
+        if (!anonymous && own && kind == "UsingShadowDecl") read_reexport(node, namespaces, source_location);
         if (!anonymous && kind == "FunctionTemplateDecl") overloaded_default_names_.insert(qualify(namespaces, name));
         if (!anonymous && (kind == "ClassTemplateDecl" || kind == "TypeAliasTemplateDecl")) {
             const auto declaration = qualify(namespaces, name);
@@ -903,6 +1021,14 @@ private:
             // "std::string". Use the written spelling when the alias names itself.
             if (std::find(visible.begin(), visible.end(), trim(target)) != visible.end()) target = written;
             for (const auto& key : visible) aliases_[key] = {target, namespaces};
+            // namespace short { using Name = long_name::Thing; } re-exports a class or enum like a using-declaration.
+            if (own) {
+                auto aliased = trim(target);
+                for (const char* prefix : {"enum ", "struct ", "class ", "::"})
+                    if (aliased.rfind(prefix, 0) == 0) aliased = aliased.substr(std::string(prefix).size());
+                if (!aliased.empty() && aliased != qualify(namespaces, name) && aliased.find_first_of("<>*&()[] ") == std::string::npos)
+                    module_.reexports.push_back({namespaces, name, aliased, "type", source_location});
+            }
         }
         if (kind == "EnumDecl" && node.contains("name") && !anonymous) {
             read_enum(node, namespaces, source_location, own, owner, accessible);
@@ -926,6 +1052,12 @@ private:
             variable.doc = comment_text(node);
             resolve(variable.type, namespaces);
             module_.variables.push_back(std::move(variable));
+        }
+        // A template with requested specializations is bound through them alone.
+        if (kind == "FunctionTemplateDecl" && !function_instantiations_.empty() && !anonymous &&
+            read_function_specializations(children, namespaces, source_location)) {
+            overloaded_default_names_.insert(label);
+            return;
         }
         if (kind != "FunctionDecl") {
             if (kind == "FunctionTemplateDecl") overloaded_default_names_.insert(label);
@@ -967,18 +1099,28 @@ Module parse(const std::filesystem::path& input, const std::string& clang,
         dependency_file = dependency_directory->path() / "compiler.d";
         command.insert(command.end(), {"-MD", "-MF", dependency_file.string(), "-MT", "rosetta-dependencies"});
     }
-    // Requested specializations are instantiated (declarations only) after the header.
+    // Requested specializations are instantiated (declarations only) after the header,
+    // one per line. Class templates come first; a request Clang reports as a function
+    // template is retried as one (taking its address instantiates the declaration).
     std::unique_ptr<detail::TemporaryDirectory> unit_directory;
     auto unit = header;
+    std::set<std::string> function_requests;
+    const auto write_unit = [&] {
+        std::string text = "#include \"" + header.string() + "\"\n";
+        for (std::size_t i = 0; i < options.instantiations.size(); ++i) {
+            const auto& requested = options.instantiations[i];
+            if (requested.find_first_of(";{}\n") != std::string::npos) throw BindingError("invalid template instantiation: " + requested);
+            if (function_requests.count(requested))
+                text += "namespace rosetta_instantiations { inline constexpr auto* function_" + std::to_string(i) + " = &" + requested + "; }\n";
+            else
+                text += "extern template class " + requested + ";\n";
+        }
+        detail::write_file(unit, text);
+    };
     if (!options.instantiations.empty()) {
         unit_directory = std::make_unique<detail::TemporaryDirectory>();
         unit = unit_directory->path() / "rosetta_instantiations.hpp";
-        std::string text = "#include \"" + header.string() + "\"\n";
-        for (const auto& requested : options.instantiations) {
-            if (requested.find_first_of(";{}\n") != std::string::npos) throw BindingError("invalid template instantiation: " + requested);
-            text += "extern template class " + requested + ";\n";
-        }
-        detail::write_file(unit, text);
+        write_unit();
     }
     std::vector<std::string> scopes;
     for (const auto& scope : options.scopes) {
@@ -991,12 +1133,30 @@ Module parse(const std::filesystem::path& input, const std::string& clang,
         "-Wno-pragma-once-outside-header", "-Wno-mismatched-tags"});
     if (options.skip_function_bodies) command.insert(command.end(), {"-Xclang", "-skip-function-bodies"});
     command.insert(command.end(), {"-Xclang", "-ast-dump=json", unit.string()});
-    const auto process = detail::run_process(command, working_directory);
+    auto process = detail::run_process(command, working_directory);
+    if (process.exit_code != 0 && unit != header) {
+        const std::string marker = "rosetta_instantiations.hpp:";
+        std::size_t retried = function_requests.size();
+        for (std::size_t at = process.error.find(marker); at != std::string::npos; at = process.error.find(marker, at + 1)) {
+            const auto line_end = process.error.find('\n', at);
+            const auto line = process.error.substr(at, line_end - at);
+            if (line.find("refers to a function template") == std::string::npos) continue;
+            const auto index = std::stoul(line.substr(marker.size())) - 2;
+            if (index < options.instantiations.size()) function_requests.insert(options.instantiations[index]);
+        }
+        if (function_requests.size() != retried) {
+            write_unit();
+            process = detail::run_process(command, working_directory);
+        }
+    }
     if (process.exit_code != 0)
         throw BindingError("Clang rejected " + header.string() + " (" + clang + "):\n" + process.error);
     try {
         const auto root = Json::parse(process.output);
-        auto module = AstReader(header.string(), std::move(scopes), options.instantiations).read(root);
+        std::vector<std::string> class_requests;
+        for (const auto& requested : options.instantiations)
+            if (!function_requests.count(requested)) class_requests.push_back(requested);
+        auto module = AstReader(header.string(), std::move(scopes), class_requests, function_requests).read(root);
         if (collect_dependencies) {
             module.dependencies = detail::compiler_dependencies(detail::read_file(dependency_file), dependency_base);
             if (unit != header)

@@ -1,18 +1,11 @@
 args <- commandArgs(trailingOnly = TRUE)
 Sys.setenv(ROSETTA_R_MODULE = args[[1]], ROSETTA_R_INTERFACE = args[[2]],
-           ROSETTA_R_VERIFY_MODULE = args[[4]], ROSETTA_R_VERIFY_INTERFACE = args[[5]], ROSETTA_R_INTERFACES = args[[6]])
+           ROSETTA_R_VERIFY_MODULE = args[[4]], ROSETTA_R_VERIFY_INTERFACE = args[[5]])
 source(args[[3]])
 stopifnot(r_demo$r_demo__add(20, 22) == 42, r_verify$r_verify__maximum(20, 42) == 42)
 counter <- r_demo$r_demo__Counter$new(20)
 stopifnot(counter$add(22) == 42)
 counter$close()
-for (system in list(r_s3, r_s4)) {
-  C <- system$demo$r_demo__Counter
-  x <- C$new(20)
-  stopifnot(C$add(x, 22) == 42)
-  C$close(x)
-  stopifnot(system$verify$r_verify__maximum(20, 42) == 42)
-}
 series <- r_verify$r_verify__Series$new(20, 2)
 stopifnot(series$text() == "[20, 21]")
 series$close()

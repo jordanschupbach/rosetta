@@ -159,6 +159,11 @@ class Calls(unittest.TestCase):
         self.assertEqual((lo_hi.first, lo_hi.second), (1.0, 3.0))
         self.assertEqual(lo_hi, (1.0, 3.0))
         self.assertEqual(f._Pair(1, 2).second, 2)
+        self.assertEqual(f.transpose([[1, 2]]), ([1.0], [2.0]))   # vectors equal tuples
+        self.assertNotEqual(f.transpose([[1, 2]]), (1.0, 2.0))
+        self.assertEqual(f.byte_sum(b"\x01\x02\xff"), 258)      # bytes for byte vectors
+        self.assertEqual(f.byte_sum(bytearray(b"\x05")), 5)
+        self.assertEqual(f.byte_sum([1, 2]), 3)
         self.assertEqual(f.repeat("ab"[0], 3), "aaa")
         self.assertEqual(f.initial("xyz"), "x")
         with self.assertRaises(TypeError):
@@ -167,6 +172,25 @@ class Calls(unittest.TestCase):
             f.repeat("a", -1)
         with self.assertRaises(ValueError):             # default mapping elsewhere
             f.Circle(-1)
+
+    def test_copy_types(self):
+        ledger = f.Ledger()
+        ledger.stamp.value = 5                          # a copy: the ledger keeps its own
+        ledger.latest().value = 6
+        self.assertEqual(ledger.stamp.value, 1)
+        ledger.stamp = f.Stamp()                        # assignment still writes through
+        self.assertEqual(ledger.latest().value, 1)
+
+    def test_reference_members(self):
+        aim = f.Aim()
+        aim.target.scale = 2                            # nested fields stay writable
+        self.assertEqual(aim.target.scale, 2)
+        aim.origin.x = 3
+        self.assertEqual(aim.target.point.x, 3)
+        with self.assertRaises(AttributeError):         # Target cannot be assigned
+            aim.target = aim.target
+        with self.assertRaises(TypeError):              # nor default constructed
+            f.Target()
 
     def test_thisown(self):
         circle = f.Circle(1)
@@ -233,11 +257,33 @@ class Values(unittest.TestCase):
         self.assertEqual(stack.items(), [1, 2])
         self.assertEqual(stack.pop(), 2)
         self.assertEqual(stack.size(), 1)
+        self.assertEqual(f.clamp_int(5, 3), 3)              # function template specializations
+        self.assertEqual(f.clamp_real(1.5, 2.5), 1.5)
+        self.assertEqual(f.clamp_int(50), 10)                # the template's default argument
+        with self.assertRaises(TypeError):
+            f.clamp_int(1.5, 2)
+        self.assertFalse(hasattr(f, "clamp_to"))
         self.assertEqual(f.Circle(1).label(), "#circle")
         self.assertEqual(f.Circle.unit().radius(), 1)
         self.assertAlmostEqual(f.golden, 1.618)
         self.assertFalse(hasattr(f, "borrowed_shape"))
         self.assertFalse(hasattr(f, "shape_label"))
+        self.assertEqual(f.features__legacy__version(), 2)  # qualified namespace
+        self.assertEqual(f.features__legacy__Tag().id, 7)
+        self.assertEqual(f.features__legacy__Mode_off, f.features__legacy__Mode.off)
+        self.assertFalse(hasattr(f, "version"))
+
+    def test_set_doc(self):
+        f._set_doc(f.adder, "Make an adder.")
+        self.assertEqual(f.adder.__doc__, "Make an adder.")
+        f._set_doc(f.Vec2.inner, "Inner product.")
+        self.assertEqual(f.Vec2(1, 2).inner.__doc__, "Inner product.")
+        f._set_doc(f.Circle.unit, "Unit circle.")          # static method
+        self.assertEqual(f.Circle.unit.__doc__, "Unit circle.")
+        f._set_doc(f.Vec2, "A vector.")                    # types: plain assignment
+        self.assertEqual(f.Vec2.__doc__, "A vector.")
+        with self.assertRaises(TypeError):
+            f._set_doc(len, "not ours")
 
     def test_docstrings(self):
         self.assertIn("Area of the shape.", f.Shape.area.__doc__)

@@ -68,13 +68,15 @@ int main(int argc, char** argv) {
             const auto generated = rosetta::generate_r(module, "api", rosetta::RObjectSystem::r6, false, policy);
             require(contains(generated.source, "R_init_api") && contains(generated.source, "R_forceSymbols(dll, TRUE)"), "native registration missing");
             require(contains(generated.interface, "R6::R6Class") && contains(generated.interface, "cloneable = FALSE") &&
-                contains(generated.interface, "active = list(\"count\"") && contains(generated.interface, "exports[[\"add\"]]"), "R6 interface missing");
+                contains(generated.interface, "active = list(\n    `count`") && contains(generated.interface, "`add` <- function(...)"), "R6 interface missing");
             rejects([&] { rosetta::generate_r(module, "api"); }, "class requires an owned class policy");
             const auto unsupported = f.parse("int ok(); int overloaded(int); int overloaded(double); void pointer(int*); ");
-            rejects([&] { rosetta::generate_r(unsupported, "api"); }, "overloads");
-            const auto partial = rosetta::generate_r(unsupported, "api", rosetta::RObjectSystem::r6, true);
-            require(partial.diagnostics.size() == 3 && contains(partial.interface, "exports[[\"ok\"]]") &&
-                !contains(partial.interface, "exports[[\"pointer\"]]"), "unsupported R declarations were silently exported");
+            rosetta::BindingPolicy none; none.explicit_class_selection = true;
+            rejects([&] { rosetta::generate_r(unsupported, "api", rosetta::RObjectSystem::r6, false, none); }, "unsupported R pointer type");
+            const auto partial = rosetta::generate_r(unsupported, "api", rosetta::RObjectSystem::r6, true, none);
+            require(partial.diagnostics.size() == 1 && contains(partial.interface, "`ok` <- function") &&
+                contains(partial.interface, "`overloaded` <- function") &&
+                !contains(partial.interface, "`pointer` <- "), "unsupported R declarations were silently exported");
             rejects([&] { rosetta::generate_r(module, "bad-name"); }, "module name");
         }},
         {"R CLI options, outputs and path protection", [](Fixture& f) {
@@ -116,13 +118,13 @@ int main(int argc, char** argv) {
             run({"--language", "r", "--r-output", (f.temporary.path() / "dependency.hpp").string(), "--depfile", depfile.string()},
                 1, "distinct paths");
         }},
-        {"R object systems share a native bridge", [](Fixture& f) {
+        {"S3 and S4 share a native bridge", [](Fixture& f) {
             const auto module = f.parse("struct Counter { Counter(int); int value() const; static int answer(); int count; const int initial; }; ");
             rosetta::BindingPolicy policy; policy.classes["Counter"] = {};
             const auto r6 = rosetta::generate_r(module, "api", rosetta::RObjectSystem::r6, false, policy);
             const auto s3 = rosetta::generate_r(module, "api", rosetta::RObjectSystem::s3, false, policy);
             const auto s4 = rosetta::generate_r(module, "api", rosetta::RObjectSystem::s4, false, policy);
-            require(r6.source == s3.source && s3.source == s4.source, "object systems changed the native ABI");
+            require(s3.source == s4.source && r6.source != s3.source, "S3 and S4 must share one native ABI, distinct from R6's");
             require(contains(s3.interface, "UseMethod") && contains(s3.interface, "registerS3method"), "S3 dispatch missing");
             require(contains(s4.interface, "methods::setClass") && contains(s4.interface, "methods::setMethod"), "S4 dispatch missing");
             for (const auto* text : {&s3.interface, &s4.interface}) {

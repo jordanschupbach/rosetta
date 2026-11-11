@@ -30,6 +30,7 @@ add_library(rosetta_core
     src/lua.cpp
     src/r.cpp
     src/python.cpp
+    src/r6.cpp
     src/ruby.cpp
     src/octave.cpp
     src/julia.cpp

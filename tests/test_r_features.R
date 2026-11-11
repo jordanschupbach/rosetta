@@ -13,10 +13,10 @@ stopifnot(inherits(s, "R6"), s$size() == 2, s$get(0) == 20, s$scaled_sum(2) == 8
 s$set(1, 22)
 stopifnot(s$scaled_sum(1) == 42)
 foreign <- Worklist$new(1)
-original <- s$.__enclos_env__$private$.ptr
-s$.__enclos_env__$private$.ptr <- foreign$.__enclos_env__$private$.ptr
+original <- s$.ptr
+s$.ptr <- foreign$.ptr
 fails(s$get(0), "wrong native object type")
-s$.__enclos_env__$private$.ptr <- original
+s$.ptr <- original
 rm(original)
 foreign$close()
 fails(s$get(2), "out of range")

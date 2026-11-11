@@ -155,7 +155,14 @@ struct Vec2 {
     Vec2& set_x(double value) { x = value; return *this; }
     Vec2& set_y(double value) { y = value; return *this; }
     double dot(const Vec2& other) const { return x * other.x + y * other.y; }
+    Vec2 clone() const { return *this; }
 };
+/// Shares its name with a builtin R (and Python) function.
+inline double sum(const std::vector<Vec2>& points) {
+    double total = 0;
+    for (const auto& p : points) total += p.x + p.y;
+    return total;
+}
 /// Holds a member object; references to it keep the holder alive.
 struct Segment {
     Vec2 start, end;
@@ -182,6 +189,7 @@ private:
 /// Members attached by the binding policy.
 inline std::string shape_label(const Shape& shape, const std::string& prefix = "#") { return prefix + shape.name(); }
 inline Circle unit_circle() { return Circle(1); }
+inline double circle_diameter(const Circle& circle) { return 2 * circle.radius(); }
 
 inline constexpr double golden = 1.618;
 
@@ -200,3 +208,45 @@ inline double run_visitor(Visitor& visitor, const std::vector<double>& values) {
 }
 
 } // namespace features
+
+namespace features {
+inline int byte_sum(const std::vector<unsigned char>& data) {
+    int total = 0;
+    for (unsigned char value : data) total += value;
+    return total;
+}
+inline std::vector<unsigned char> bytes_of(const std::string& text) { return {text.begin(), text.end()}; }
+
+/// A value type the policy lists in copy_types: references to it come back as copies.
+struct Stamp { int value = 1; };
+struct Ledger {
+    Stamp stamp;
+    Stamp& latest() { return stamp; }
+};
+
+/// Reference member: no implicit default constructor and no copy assignment.
+struct Target {
+    Vec2& point;
+    double scale = 1;
+};
+struct Aim {
+    Vec2 origin{};
+    Target target;
+    Aim() : target{origin} {}
+};
+
+/// Function template: bound per specialization through the policy's templates.
+template <typename T> T clamp_to(T value, T high = T(10)) { return value < high ? value : high; }
+} // namespace features
+
+namespace features::legacy {
+/// Qualified by the policy: exported as features__legacy__version.
+inline int version() { return 2; }
+struct Tag { int id = 7; };
+enum class Mode { on, off };
+// Re-exported names: R6 also binds them as features__legacy__Circle and so on.
+using features::Circle;
+using features::area_of;
+using features::Kind;
+using Fill = features::Fill;
+} // namespace features::legacy
