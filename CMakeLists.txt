@@ -46,6 +46,7 @@ add_library(rosetta_core
     src/go.cpp
     src/apl.cpp
     src/cobol.cpp
+    src/cobol_full.cpp
     src/cli.cpp
     src/policy.cpp
     src/compilation_database.cpp

@@ -88,7 +88,8 @@
         '';
         # nixpkgs has no prebuilt GnuCOBOL for macOS, so shells there use the
         # cobc on PATH (for example Homebrew's) instead of building it.
-        gnuCobol = lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.gnucobol ];
+        # A shell takes a multi-output package's dev output; cobc is in bin.
+        gnuCobol = lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.gnucobol pkgs.gnucobol.bin ];
         chunkShell =
           {
             name,

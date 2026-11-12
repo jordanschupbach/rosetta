@@ -172,6 +172,43 @@ int main(int argc, char** argv) {
         require(rosetta::run_cli(invalid, out, error) == 1 && contains(error.str(), "require --language cobol"), "COBOL-only option accepted for Go");
         invalid = {header.string(), "--language", "cobol", "--module", "api", "-o", header.string()};
         require(rosetta::run_cli(invalid, out, error) == 1, "COBOL output overwrote input");
+
+        // The full API: a callbacks copybook, the record prefix, string and result sizes, and option checks.
+        parse("#include <functional>\n#include <string>\n"
+              "/// Applies f.\nint apply(std::function<int(int)> f, int x);\n"
+              "std::string name(const std::string& text);\n"
+              "void swap_ends(std::pair<int, int>& ends);\n"
+              "int compute_the_rather_long_named_quantity_now(int number_of_samples);\n"
+              "struct Shape { virtual ~Shape() = default; virtual double area() const = 0; };\n");
+        const auto select_all = temporary.path() / "all.policy.json";
+        rosetta::detail::write_file(select_all, R"({"version": 1, "select": "all"})");
+        auto full = args;
+        full.insert(full.end(), {"--cobol-api", "full", "--cobol-prefix", "lib", "--cobol-result-size", "4000", "--parts", "2",
+                                 "--policy", select_all.string()});
+        require(rosetta::run_cli(full, out, error) == 0, error.str());
+        const auto book = rosetta::detail::read_file(temporary.path() / "api.cpy");
+        const auto callbacks = rosetta::detail::read_file(temporary.path() / "api-callbacks.cpy");
+        require(contains(book, "01 LIB-APPLY.") && contains(book, "LIB-APPLY-F USAGE PROGRAM-POINTER") &&
+            contains(book, "*>> CALL \"lib_apply\" USING LIB-APPLY LIB-STATUS") && contains(book, "*>> Applies f."),
+            "full COBOL records or doc comments missing");
+        require(contains(book, "05 LIB-NAME-TEXT PIC X(256).") && contains(book, "05 LIB-NAME-RESULT PIC X(4000)."),
+            "string results did not take --cobol-result-size");
+        // Over-long words are abbreviated left to right, keeping the field's name whole.
+        require(contains(book, "05 LIB-CMPT-THE-RTHR-LNG-NMD-QNTTY-NOW-NUMBER-OF-SAMPLES ") &&
+            contains(book, "01 LIB-COMPUTE-THE-RATHER-LONG-NAMED-QUANTITY-NOW."), "long words not abbreviated readably");
+        require(contains(book, "LIB-SWAP-ENDS-ENDS-FIRST") && contains(book, "01 LIB-SHAPE-EXTEND."), "in/out pair or director missing");
+        require(contains(callbacks, "01 LIB-CALLBACK-STATUS.") && contains(callbacks, "01 LIB-APPLY-F-ARGS.") &&
+            contains(callbacks, "01 LIB-SHAPE-AREA-ARGS."), "callbacks copybook incomplete");
+        require(std::filesystem::exists(temporary.path() / "cobol bindings_1.cpp"), "--parts did not split the full COBOL API");
+        for (const auto* option : {"--cobol-prefix", "--cobol-table-size", "--cobol-result-size"}) {
+            auto minimal = args; minimal.insert(minimal.end(), {option, option == std::string("--cobol-prefix") ? "x" : "10"});
+            require(rosetta::run_cli(minimal, out, error) == 1 && contains(error.str(), "require --cobol-api full"),
+                std::string(option) + " accepted without --cobol-api full");
+        }
+        auto zero = full; zero.insert(zero.end(), {"--cobol-result-size", "0"});
+        require(rosetta::run_cli(zero, out, error) == 1 && contains(error.str(), "positive decimal integer"), "zero result size accepted");
+        auto api = args; api.insert(api.end(), {"--cobol-api", "large"});
+        require(rosetta::run_cli(api, out, error) == 1 && contains(error.str(), "minimal or full"), "unknown COBOL API accepted");
         std::cout << "PASS COBOL records, usages, strings, defaults, access, names, collisions, layout, CLI and artifacts\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }

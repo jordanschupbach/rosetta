@@ -286,7 +286,9 @@ COBOL emits a copybook of parameter records plus C++ stubs that GnuCOBOL program
 
 Evidence: [cobol.cpp](../src/cobol.cpp), [cobol_runtime.hpp](../src/cobol_runtime.hpp), [runtime tests](../tests/test_cobol.cob), [fixed-format test](../tests/test_cobol_fixed.cob), [capability tests](../tests/test_cobol_capabilities.cpp) and [CobolExample.cmake](../cmake/CobolExample.cmake). Capability tests cover the shared strict/partial unsupported cases, policies/access, record layouts and field usages, string fields and their capacity, `-GIVEN` defaults, renamed parameters, camelCase words, the status record, fixed-format columns, case-insensitive and CALL-name collisions, word lengths, deterministic generation and CLI artifacts. Runtime tests reuse `r_demo.hpp` and `r_verification.hpp` and check every integer boundary, floats, booleans, trimmed and exact-length strings with NULs and UTF-8, overlong results, defaults and their limit, status kinds, messages, `RETURN-CODE` and `OMITTED`, closed, forged and wrongly typed handles, native tasks and exit with a pending worker.
 
-Next gates: COBOL tables for arrays/containers; enum codecs; native values/factories/borrows; callbacks; other COBOL compilers; Windows.
+The full API (`--cobol-api full`, [cobol_full.cpp](../src/cobol_full.cpp), [runtime tests](../tests/test_cobol_full.cob), ctest `cobol_full`) adds inheritance and polymorphic handles, overloads, enums, containers (element calls and OCCURS tables), pairs/tuples/optionals, operators, callbacks as PROGRAM-POINTERs, std::function results, COBOL overrides of virtual methods with base calls, a CALLBACK error kind and `*>>` hover docs; it passes with GnuCOBOL 3.2 on Linux (x86-64).
+
+Next gates: other COBOL compilers; Windows.
 
 Validation: all six COBOL runtime programs (five free-format families and the fixed-format build) passed with GnuCOBOL 3.2 (Homebrew) and Clang from nixpkgs on macOS (arm64), with generated stubs compiled under warnings-as-errors. Other platforms remain unverified.
 

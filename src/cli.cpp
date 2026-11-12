@@ -44,6 +44,11 @@ Generate native language bindings from a C++ header.
   --apl-library-dir DIR Directory the APL scripts load their libraries from (default: .)
   --cobol-output PATH   Generated COBOL copybook (default: MODULE.cpy beside OUTPUT)
   --cobol-string-size N Byte capacity of COBOL string fields (default: 256)
+  --cobol-api API       minimal (default) or full: handles, containers, overloads, callbacks, overrides, docs
+  --cobol-prefix WORD   Full API: prefix of every COBOL name (default: the module name)
+  --cobol-callbacks PATH Full API: the callbacks copybook (default: MODULE-callbacks.cpy beside the copybook)
+  --cobol-table-size N  Full API: OCCURS capacity of -TABLE records (default: 1000)
+  --cobol-result-size N Full API: bytes of string results (default: the string size)
   --java-output PATH    Generated Java interface (default: MODULE.java beside OUTPUT)
   --fortran-output PATH Generated Fortran interface (default: MODULE.f90 beside OUTPUT)
   --csharp-output PATH Generated C# interface (default: MODULE.cs beside OUTPUT)
@@ -84,7 +89,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         std::string header, name, output, dump_ir, depfile, policy_path, clang = "clang++";
         std::string database_path, translation_unit, include_as;
         std::size_t python_parts = 1;
-        std::string language = "lua", object_system, r_output, julia_output, java_output, java_package, csharp_output, csharp_namespace, fortran_output, lisp_output, guile_output, ocaml_output, go_output, gnu_apl_output, dyalog_output, apl_library_dir, cobol_output, cobol_string_size, lua_api, lua_meta, lisp_api, lisp_system, lisp_nicknames, lisp_library;
+        std::string language = "lua", object_system, r_output, julia_output, java_output, java_package, csharp_output, csharp_namespace, fortran_output, lisp_output, guile_output, ocaml_output, go_output, gnu_apl_output, dyalog_output, apl_library_dir, cobol_output, cobol_string_size, lua_api, lua_meta, lisp_api, lisp_system, lisp_nicknames, lisp_library, cobol_api, cobol_prefix, cobol_callbacks, cobol_table_size, cobol_result_size;
         std::optional<std::size_t> command_index;
         std::vector<std::string> extra_flags;
         std::vector<std::filesystem::path> scopes;
@@ -107,7 +112,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             }
             if (arg == "--module" || arg == "--output" || arg == "-o" || arg == "--clang" ||
                 arg == "--dump-ir" || arg == "--depfile" || arg == "--policy" || arg == "--language" || arg == "--compile-commands" ||
-                arg == "--translation-unit" || arg == "--command-index" || arg == "--object-system" || arg == "--r-output" || arg == "--julia-output" || arg == "--java-output" || arg == "--java-package" || arg == "--csharp-output" || arg == "--csharp-namespace" || arg == "--fortran-output" || arg == "--lisp-output" || arg == "--guile-output" || arg == "--ocaml-output" || arg == "--go-output" || arg == "--gnu-apl-output" || arg == "--dyalog-output" || arg == "--apl-library-dir" || arg == "--cobol-output" || arg == "--cobol-string-size" || arg == "--include-as" || arg == "--python-parts" || arg == "--parts" || arg == "--lua-api" || arg == "--lua-meta" || arg == "--lisp-api" || arg == "--lisp-system" || arg == "--lisp-nicknames" || arg == "--lisp-library") {
+                arg == "--translation-unit" || arg == "--command-index" || arg == "--object-system" || arg == "--r-output" || arg == "--julia-output" || arg == "--java-output" || arg == "--java-package" || arg == "--csharp-output" || arg == "--csharp-namespace" || arg == "--fortran-output" || arg == "--lisp-output" || arg == "--guile-output" || arg == "--ocaml-output" || arg == "--go-output" || arg == "--gnu-apl-output" || arg == "--dyalog-output" || arg == "--apl-library-dir" || arg == "--cobol-output" || arg == "--cobol-string-size" || arg == "--cobol-api" || arg == "--cobol-prefix" || arg == "--cobol-callbacks" || arg == "--cobol-table-size" || arg == "--cobol-result-size" || arg == "--include-as" || arg == "--python-parts" || arg == "--parts" || arg == "--lua-api" || arg == "--lua-meta" || arg == "--lisp-api" || arg == "--lisp-system" || arg == "--lisp-nicknames" || arg == "--lisp-library") {
                 if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
                     throw BindingError("missing value for " + arg);
                 const auto& value = arguments[i];
@@ -147,6 +152,11 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
                 else if (arg == "--apl-library-dir") apl_library_dir = value;
                 else if (arg == "--cobol-output") cobol_output = value;
                 else if (arg == "--cobol-string-size") cobol_string_size = value;
+                else if (arg == "--cobol-api") cobol_api = value;
+                else if (arg == "--cobol-prefix") cobol_prefix = value;
+                else if (arg == "--cobol-callbacks") cobol_callbacks = value;
+                else if (arg == "--cobol-table-size") cobol_table_size = value;
+                else if (arg == "--cobol-result-size") cobol_result_size = value;
                 else if (arg == "--csharp-output") csharp_output = value;
                 else if (arg == "--csharp-namespace") csharp_namespace = value;
                 else if (arg == "--command-index") {
@@ -174,8 +184,14 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         const bool lisp_full = language == "common-lisp" && lisp_api == "full";
         if (!lisp_full && (!lisp_system.empty() || !lisp_nicknames.empty() || !lisp_library.empty()))
             throw BindingError("--lisp-system, --lisp-nicknames and --lisp-library require --lisp-api full");
-        if (language != "python" && !lua_full && !lisp_full && !(language == "r" && object_system != "s3" && object_system != "s4") && python_parts != 1)
-            throw BindingError("--parts requires --language python, r (R6), lua (--lua-api full) or common-lisp (--lisp-api full)");
+        if (language != "cobol" && (!cobol_api.empty() || !cobol_prefix.empty() || !cobol_callbacks.empty() || !cobol_table_size.empty() || !cobol_result_size.empty()))
+            throw BindingError("--cobol-api, --cobol-prefix, --cobol-callbacks, --cobol-table-size and --cobol-result-size require --language cobol");
+        if (!cobol_api.empty() && cobol_api != "minimal" && cobol_api != "full") throw BindingError("--cobol-api must be minimal or full");
+        const bool cobol_full = language == "cobol" && cobol_api == "full";
+        if (!cobol_full && (!cobol_prefix.empty() || !cobol_callbacks.empty() || !cobol_table_size.empty() || !cobol_result_size.empty()))
+            throw BindingError("--cobol-prefix, --cobol-callbacks, --cobol-table-size and --cobol-result-size require --cobol-api full");
+        if (language != "python" && !lua_full && !lisp_full && !cobol_full && !(language == "r" && object_system != "s3" && object_system != "s4") && python_parts != 1)
+            throw BindingError("--parts requires --language python, r (R6), lua (--lua-api full), common-lisp (--lisp-api full) or cobol (--cobol-api full)");
         if (r_package && (language != "r" || object_system == "s3" || object_system == "s4"))
             throw BindingError("--r-package requires --language r with the R6 object system");
         if (language != "r" && (!object_system.empty() || !r_output.empty()))
@@ -220,6 +236,20 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
                     throw BindingError("COBOL string size must be a decimal integer");
             }
         }
+        std::size_t table_size = 1000;
+        if (!cobol_table_size.empty()) {
+            const auto parsed = std::from_chars(cobol_table_size.data(), cobol_table_size.data() + cobol_table_size.size(), table_size);
+            if (parsed.ec != std::errc{} || parsed.ptr != cobol_table_size.data() + cobol_table_size.size())
+                throw BindingError("COBOL table size must be a decimal integer");
+        }
+        std::size_t result_size = 0;
+        if (!cobol_result_size.empty()) {
+            const auto parsed = std::from_chars(cobol_result_size.data(), cobol_result_size.data() + cobol_result_size.size(), result_size);
+            if (parsed.ec != std::errc{} || parsed.ptr != cobol_result_size.data() + cobol_result_size.size() || result_size == 0)
+                throw BindingError("COBOL result size must be a positive decimal integer");
+        }
+        if (cobol_full && cobol_callbacks.empty())
+            cobol_callbacks = (std::filesystem::path(cobol_output).parent_path() / (std::filesystem::path(cobol_output).stem().string() + "-callbacks.cpy")).string();
         if (language != "apl" && (!gnu_apl_output.empty() || !dyalog_output.empty() || !apl_library_dir.empty()))
             throw BindingError("--gnu-apl-output, --dyalog-output and --apl-library-dir require --language apl");
         if (language == "apl") {
@@ -256,7 +286,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         const auto dep_path = depfile.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(depfile);
         const auto interface_path = interface_output.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(interface_output);
         // APL's second script: the Dyalog namespace.
-        const auto second_output = !dyalog_output.empty() ? dyalog_output : lisp_system;
+        const auto second_output = !dyalog_output.empty() ? dyalog_output : !cobol_callbacks.empty() ? cobol_callbacks : lisp_system;
         const auto second_path = second_output.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(second_output);
         const auto same_file = [](const auto& a, const auto& b) {
             if (a == b) return true;
@@ -353,6 +383,23 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             const auto ocaml = generate_ocaml(module, name, skip, policy);
             generated = {ocaml.source, ocaml.diagnostics};
             language_interface = ocaml.interface;
+        } else if (cobol_full) {
+            CobolFullOptions options;
+            options.parts = python_parts;
+            options.prefix = cobol_prefix;
+            options.string_size = string_size;
+            options.table_size = table_size;
+            options.result_size = result_size;
+            options.callbacks_name = std::filesystem::path(cobol_callbacks).filename().string();
+            const auto cobol = generate_cobol_full(module, name, skip, policy, options);
+            generated = {cobol.source, cobol.diagnostics};
+            for (std::size_t i = 0; i < cobol.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, cobol.parts[i]);
+            }
+            language_interface = cobol.copybook;
+            second_interface = cobol.callbacks;
         } else if (language == "cobol") {
             const auto cobol = generate_cobol(module, name, skip, policy, string_size);
             generated = {cobol.source, cobol.diagnostics};

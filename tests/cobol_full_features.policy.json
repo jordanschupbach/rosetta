@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "select": "all",
+  "scope": [
+    "../examples/python_features.hpp",
+    "cobol_full_features.hpp"
+  ],
+  "names": "flat",
+  "sequences": "vector",
+  "qualify": [
+    "features::legacy"
+  ],
+  "copy_types": [
+    "features::Stamp"
+  ],
+  "exceptions": [
+    {
+      "match": "features::repeat",
+      "map": [
+        [
+          "std::exception",
+          "RuntimeError"
+        ]
+      ]
+    }
+  ],
+  "templates": {
+    "IntStack": "features::Stack<int>",
+    "clamp_int": "features::clamp_to<int>",
+    "clamp_real": "features::clamp_to<double>"
+  },
+  "extend": {
+    "features::Shape": {
+      "label": "features::shape_label"
+    },
+    "features::Circle": {
+      "unit": "features::unit_circle"
+    },
+    "features::legacy::Circle": {
+      "diameter": "features::circle_diameter"
+    }
+  },
+  "rename": {
+    "features::Vec2::dot": "inner"
+  },
+  "exclude": [
+    "features::borrowed_shape"
+  ],
+  "returns": {}
+}

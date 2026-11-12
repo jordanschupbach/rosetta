@@ -1179,10 +1179,11 @@ GeneratedRSource Generator::run() {
                 if (function.qualified_name() != target && normalize(function.qualified_name()) != normalize(target)) continue;
                 any = true;
                 extension_functions_.insert(function.qualified_name());
-                const bool self = !function.parameters.empty() && [&] {
+                const auto& owner_bases = classes_.at(owner).bases;
+                const bool self = !function.parameters.empty() && [&, &owner = owner] {
                     const auto& first = function.parameters[0];
                     const auto& base = first.kind == TypeKind::pointer && !first.arguments.empty() ? first.arguments[0] : referent(first);
-                    const auto& bases = classes_.at(owner).bases;
+                    const auto& bases = owner_bases;
                     return base.kind == TypeKind::record && (base.declaration == owner ||
                         std::find(bases.begin(), bases.end(), base.declaration) != bases.end());
                 }();

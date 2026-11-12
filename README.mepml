@@ -1222,7 +1222,31 @@ rosetta_generate_cobol(HEADER api.hpp MODULE library OUTPUT "${CMAKE_CURRENT_BIN
 add_library(library STATIC "${CMAKE_CURRENT_BINARY_DIR}/library.cpp")
 ```
 
-[CobolExample.cmake|cmake/CobolExample.cmake] shows the full build, including the `cobc` link. Enable `ROSETTA_BUILD_COBOL_EXAMPLES` for the repository libraries; nixpkgs has no prebuilt GnuCOBOL for macOS, so there the shells use the `cobc` on `PATH` (for example Homebrew's). Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Enums, arrays and containers (COBOL tables), overloads, callbacks, class-valued/borrowed values, inheritance, other COBOL compilers and Windows remain open. Tested with GnuCOBOL 3.2 on macOS (arm64); other platforms remain unverified.
+[CobolExample.cmake|cmake/CobolExample.cmake] shows the full build, including the `cobc` link. Enable `ROSETTA_BUILD_COBOL_EXAMPLES` for the repository libraries; nixpkgs has no prebuilt GnuCOBOL for macOS, so there the shells use the `cobc` on `PATH` (for example Homebrew's). Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. The minimal API leaves enums, containers, overloads, callbacks, class-valued values and inheritance to the full API below. Tested with GnuCOBOL 3.2 on macOS (arm64); other platforms remain unverified.
+
+>>> Full COBOL API
+
+`--language cobol --cobol-api full` generates a library-shaped procedural interface (the same planning as the Python, R6, full Lua and full Common Lisp backends) for GnuCOBOL, which has no object-oriented COBOL. It writes the C\+\+ stubs, the copybook and a callbacks copybook:
+
+```{sh, eval=false}
+rosetta api.hpp --language cobol --cobol-api full --module library --cobol-prefix lib --cobol-result-size 16384 \
+  --policy api.policy.json -o generated/library.cpp --parts 4 --cobol-output copybooks/library.cpy
+clang++ -std=c++17 -c -fPIC generated/library*.cpp && ar rcs liblibrary.a library*.o
+cobc -x -free -fstatic-call -I copybooks program.cob -L. -llibrary -Q -lstdc++
+```
+
+- COPY `library.cpy` into WORKING-STORAGE (or put its directory on `COBCPY`). Records are named after `--cobol-prefix` (default: the module) and the C\+\+ name, without namespaces: `LIB-ADD`, `LIB-CIRCLE-NEW`, `LIB-SHAPE-AREA`, called as `CALL "lib_shape_area" USING LIB-SHAPE-AREA LIB-STATUS`. Words longer than 55 characters are abbreviated so every line fits fixed format: words after the prefix lose their inner vowels, left to right (`LIB-RNDM-FRST-CLASSIFIER-PLOT-DECISION-REGIONS-X-FEATURE`), then letters; a hash suffix is the last resort. Each field's doc comment names its C\+\+ parameter.
+- Objects are handles (`BINARY-DOUBLE UNSIGNED`, 0 for null). A result is a handle to its most-derived bound class, and a handle to a derived class works wherever its base is expected. `CALL "lib_close" USING LIB-HANDLE LIB-STATUS` closes any handle; `lib_handle_type` and `lib_handle_open` inspect one. Borrowed results (references into an object) keep their owner alive; objects passed by `unique_ptr` or `shared_ptr` move into or are shared with C\+\+. Fields are `LIB-K-FIELD` records read with `lib_k_field_get` and written with `lib_k_field_set`; reference and pointer fields are read-only.
+- Overloads: the first takes the plain name and the others add their parameter types (`LIB-PICK-DOUBLE`, `LIB-PICK-STRING`). Defaults use `-GIVEN`, enums are `BINARY-LONG` with 88 levels and 78-level constants, pairs and tuples are flattened (`-FIRST`/`-SECOND`, `-1`..`-n`), optionals add `-PRESENT`, and operators become words (`LIB-VEC2-PLUS`, `LIB-VEC2-AT`).
+- Containers are handles to native values, one value type per container type (`VECTOR-DOUBLE`, `MAP-STRING-INT`). `LIB-VECTOR-DOUBLE` holds `-SELF`, `-INDEX` (1-based), `-SIZE` and `-VALUE` for `_new`, `_size`, `_get`, `_set`, `_push` and `_clear`; maps use `-KEY`, `-FOUND` and `-KEYS` for `_get`, `_set`, `_has`, `_remove` and `_keys`. `LIB-VECTOR-DOUBLE-TABLE` copies in bulk between a container and an `OCCURS 0 TO --cobol-table-size DEPENDING ON -COUNT` table with `_from_table`, `_append_table` and `_to_table` (from `-START`).
+- A `std::function` parameter is a `PROGRAM-POINTER` (`SET LIB-APPLY-F TO ENTRY "SQUARE-IT"`). C\+\+ calls that program `USING` its argument record from the callbacks copybook (`LIB-APPLY-F-ARGS`, with `-ARG-n` and `-RESULT`) and `LIB-CALLBACK-STATUS`. A `std::function` result is a handle called with `lib_fn_..._call`.
+- Virtual classes can be extended from COBOL: `LIB-SHAPE-EXTEND` has one `PROGRAM-POINTER` per overridable method plus the constructor's parameters, and `lib_shape_extend` returns a handle to a C\+\+ object whose virtual methods call those programs (NULL keeps the C\+\+ method; pure virtual ones must be set). An override program receives `LIB-SHAPE-AREA-ARGS` (`-SELF`, the parameters, `-RESULT`); `CALL "lib_shape_area_base"` calls the C\+\+ implementation. Handles passed to a program are valid until it returns.
+- Errors fill `LIB-STATUS` and `RETURN-CODE` as in the minimal API, with a further kind `CALLBACK`: a program that sets `LIB-CALLBACK-STATUS-CODE` (and its message) fails the C\+\+ call, and the caller sees kind `CALLBACK` and the message.
+- Doc comments (`*>>`) before each record and field give the C\+\+ signature, the exact `CALL` statement (or the `PROCEDURE DIVISION USING` line of a callback record), what each field holds and the C\+\+ documentation, so editors (mep's COBOL LSP) show them on hover.
+- String fields are `PIC X(256)` (`--cobol-string-size`). String results, which tend to be longer (summaries, `to_string`), can have their own capacity with `--cobol-result-size N`; a result longer than its field is a RANGE error that reports the length it needed.
+- In CMake, use `rosetta_generate_cobol(... COBOL_API full COBOL_PREFIX lib PARTS N)`; `COBOL_CALLBACKS`, `COBOL_TABLE_SIZE` and `COBOL_RESULT_SIZE` set the callbacks copybook path, the table capacity and the string result capacity.
+
+`tests/test_cobol_full.cob` (ctest `cobol_full`) exercises all of this on `examples/python_features.hpp`; datamunge's COBOL bindings use it. Tested with GnuCOBOL 3.2 on Linux (x86-64).
 
 >> Full Lua API
 

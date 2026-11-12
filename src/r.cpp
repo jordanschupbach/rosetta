@@ -64,7 +64,7 @@ GeneratedRSource generate_r(const Module& module, const std::string& name, RObje
     const bool r6 = object_system == RObjectSystem::r6;
     const std::string system_name = r6 ? "R6" : object_system == RObjectSystem::s3 ? "S3" : "S4";
     if (!identifier(name)) throw BindingError("module name must be a simple ASCII identifier starting with a letter");
-    GeneratedRSource result{{}, {}, module.diagnostics};
+    GeneratedRSource result{{}, {}, module.diagnostics, {}};
     auto reject = [&](const std::string& context, const std::string& reason) {
         result.diagnostics.push_back(context + ": " + reason);
     };

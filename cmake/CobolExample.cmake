@@ -66,6 +66,28 @@ if(ROSETTA_BUILD_COBOL_EXAMPLES)
             set_tests_properties(cobol_${family} PROPERTIES TIMEOUT 60
                 PASS_REGULAR_EXPRESSION "ROSETTA PASS ${family}" FAIL_REGULAR_EXPRESSION "FAIL")
         endforeach()
+        # The full API (--cobol-api full) on the features fixture (plus COBOL-only cases), in two parts.
+        rosetta_generate_cobol(HEADER "${CMAKE_CURRENT_SOURCE_DIR}/tests/cobol_full_features.hpp" MODULE features
+            OUTPUT "${cobol_generated}/features.cpp" COBOL_OUTPUT "${cobol_dir}/features.cpy" COBOL_API full
+            COBOL_PREFIX ft COBOL_RESULT_SIZE 1000 PARTS 2 CLANG "${ROSETTA_CLANG_EXECUTABLE}"
+            POLICY "${CMAKE_CURRENT_SOURCE_DIR}/tests/cobol_full_features.policy.json"
+            FLAGS "-I${CMAKE_CURRENT_SOURCE_DIR}/examples")
+        add_library(rosetta_cobol_full STATIC "${cobol_generated}/features.cpp" "${cobol_generated}/features_1.cpp")
+        set_target_properties(rosetta_cobol_full PROPERTIES OUTPUT_NAME features PREFIX "lib" SUFFIX ".a"
+            ARCHIVE_OUTPUT_DIRECTORY "${cobol_dir}" POSITION_INDEPENDENT_CODE ON)
+        target_include_directories(rosetta_cobol_full PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/examples" "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        target_compile_features(rosetta_cobol_full PRIVATE cxx_std_17)
+        rosetta_warnings(rosetta_cobol_full)
+        set(full_source "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cobol_full.cob")
+        set(full_binary "${cobol_dir}/test_cobol_full")
+        add_custom_command(OUTPUT "${full_binary}"
+            COMMAND "${ROSETTA_COBC_EXECUTABLE}" -x -free -fstatic-call -Wall -I "${cobol_dir}" -o "${full_binary}" "${full_source}"
+                -L "${cobol_dir}" -lfeatures ${cobol_cxx}
+            DEPENDS "${full_source}" "${cobol_dir}/features.cpy" "${cobol_dir}/features-callbacks.cpy" rosetta_cobol_full
+            COMMENT "Compiling COBOL full API tests" VERBATIM)
+        add_custom_target(rosetta_cobol_full_tests ALL DEPENDS "${full_binary}")
+        add_test(NAME cobol_full COMMAND "${full_binary}")
+        set_tests_properties(cobol_full PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "ROSETTA PASS full" FAIL_REGULAR_EXPRESSION "FAIL")
         add_test(NAME cobol_fixed_format COMMAND "${cobol_dir}/test_cobol_fixed")
         set_tests_properties(cobol_fixed_format PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "ROSETTA PASS fixed" FAIL_REGULAR_EXPRESSION "FAIL")
     endif()
