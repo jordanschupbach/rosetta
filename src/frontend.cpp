@@ -53,82 +53,323 @@ std::string enum_constant_value(const Json& node) {
     return {};
 }
 
-std::string comment_line(std::string text) {
-    if (!text.empty() && text.front() == ' ') text.erase(0, 1);
-    while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) text.pop_back();
-    return text;
+// --- Documentation comments ----------------------------------------------
+//
+// Clang's JSON dump omits a location's line when it equals the previously printed one, so the
+// line of each comment node is recovered by replaying the dump order (loc, range, children).
+void comment_lines(const Json& node, long& current, std::map<const Json*, long>& lines) {
+    const auto take = [&](const Json& location) {
+        if (location.is_object() && location.contains("line")) current = location.at("line").get<long>();
+    };
+    if (node.contains("loc")) take(node.at("loc"));
+    lines[&node] = current;
+    if (node.contains("range")) {
+        take(node.at("range").value("begin", empty_object));
+        take(node.at("range").value("end", empty_object));
+    }
+    for (const auto& child : node.contains("inner") ? node.at("inner") : empty_array) comment_lines(child, current, lines);
 }
 
-// Plain text of a paragraph: one line per TextComment, inline commands keep their arguments.
-std::string comment_paragraph(const Json& node) {
+// Leading spaces dropped; list items start at column 0 and their continuation lines get two.
+std::string tidy_lines(const std::vector<std::string>& raw) {
     std::string result;
-    bool fresh_line = true;
-    const auto& children = node.contains("inner") ? node.at("inner") : empty_array;
-    for (const auto& child : children) {
-        const auto kind = child.value("kind", "");
-        if (kind == "TextComment") {
-            auto text = comment_line(child.value("text", ""));
-            if (!fresh_line) result += "\n";
-            result += text;
-            fresh_line = false;
-        } else if (kind == "InlineCommandComment" && child.contains("args")) {
-            for (const auto& argument : child.at("args")) {
-                if (!result.empty() && result.back() != ' ' && result.back() != '\n') result += ' ';
-                result += argument.get<std::string>();
+    bool in_list = false;
+    for (auto line : raw) {
+        line = trim(line);
+        if (line.empty()) continue;
+        static const std::regex item(R"(^([-*+]|\d+[.)]) )");
+        const bool starts_item = std::regex_search(line, item);
+        if (starts_item) in_list = true;
+        else if (in_list) line = "  " + line;
+        result += (result.empty() ? "" : "\n") + line;
+    }
+    return result;
+}
+
+// Splits "Bar." into ("Bar", ".") so references keep sentence punctuation outside markup.
+std::pair<std::string, std::string> split_punctuation(std::string word) {
+    std::string tail;
+    while (!word.empty() && std::string(".,;:!?").find(word.back()) != std::string::npos) {
+        tail.insert(tail.begin(), word.back());
+        word.pop_back();
+    }
+    return {word, tail};
+}
+
+class CommentReader {
+public:
+    explicit CommentReader(const Json& full) {
+        long current = -1;
+        comment_lines(full, current, lines_);
+    }
+
+    long line(const Json& node) const {
+        const auto found = lines_.find(&node);
+        return found == lines_.end() ? -1 : found->second;
+    }
+
+    // Appends a paragraph's inline content to `out` (one entry per source line).
+    void paragraph(const Json& node, std::vector<std::string>& out, long& at) const {
+        for (const auto& child : node.contains("inner") ? node.at("inner") : empty_array) {
+            const auto kind = child.value("kind", "");
+            const auto here = line(child);
+            if (out.empty() || (here >= 0 && at >= 0 && here != at)) out.emplace_back();
+            if (here >= 0) at = here;
+            auto& text = out.back();
+            if (kind == "TextComment") {
+                text += child.value("text", "");
+            } else if (kind == "InlineCommandComment") {
+                const auto name = child.value("name", "");
+                const auto render = child.value("renderKind", "normal");
+                if (name == "n") { out.emplace_back(); continue; }
+                if (!child.contains("args")) continue;
+                std::string words;
+                for (const auto& argument : child.at("args")) words += (words.empty() ? "" : " ") + argument.get<std::string>();
+                auto [word, tail] = split_punctuation(words);
+                if (word.empty()) { text += tail; continue; }
+                if (render == "monospaced") word = "`" + word + "`";
+                else if (render == "bold") word = "**" + word + "**";
+                else if (render == "emphasized") word = "*" + word + "*";
+                if (!text.empty() && text.back() != ' ' && text.back() != '(') text += ' ';
+                text += word + tail;
+            } else if (kind == "HTMLStartTagComment" || kind == "HTMLEndTagComment") {
+                const auto tag = child.value("name", "");
+                if (tag == "b" || tag == "strong") text += "**";
+                else if (tag == "i" || tag == "em") text += "*";
+                else if (tag == "code" || tag == "tt") text += "`";
+                else if (kind == "HTMLStartTagComment" && tag == "br") out.emplace_back();
+                else if (kind == "HTMLStartTagComment" && tag == "li") { out.emplace_back(); out.back() = "- "; }
             }
         }
     }
-    const auto begin = result.find_first_not_of(" \n");
-    if (begin == std::string::npos) return {};
-    return result.substr(begin, result.find_last_not_of(" \n") - begin + 1);
+
+    // The text of a block command's body (its paragraphs).
+    std::string body(const Json& node) const {
+        std::vector<std::string> raw;
+        long at = -1;
+        for (const auto& child : node.contains("inner") ? node.at("inner") : empty_array)
+            if (child.value("kind", "") == "ParagraphComment") paragraph(child, raw, at);
+        return tidy_lines(raw);
+    }
+
+private:
+    std::map<const Json*, long> lines_;
+};
+
+std::string verbatim_text(const Json& node, std::string* language = nullptr) {
+    std::vector<std::string> lines;
+    for (const auto& line : node.contains("inner") ? node.at("inner") : empty_array) lines.push_back(line.value("text", ""));
+    // @code{.py} arrives as a first line holding "{.py}".
+    if (!lines.empty()) {
+        static const std::regex tag(R"(^\{\.?([A-Za-z0-9_+#-]*)\}\s*$)");
+        std::smatch match;
+        if (std::regex_match(lines.front(), match, tag)) {
+            if (language) *language = match[1];
+            lines.erase(lines.begin());
+        }
+    }
+    while (!lines.empty() && trim(lines.front()).empty()) lines.erase(lines.begin());
+    while (!lines.empty() && trim(lines.back()).empty()) lines.pop_back();
+    std::size_t indent = std::string::npos;
+    for (const auto& line : lines)
+        if (!trim(line).empty()) indent = std::min(indent, line.find_first_not_of(" \t"));
+    std::string result;
+    for (const auto& line : lines)
+        result += (result.empty() ? "" : "\n") + (trim(line).empty() ? std::string() : line.substr(indent));
+    return result;
 }
 
-// Render a Clang FullComment as docstring text: paragraphs, then parameters and result.
-std::string comment_text(const Json& node) {
+// Parses a declaration's attached FullComment into Documentation (empty without one).
+Documentation comment_documentation(const Json& node) {
+    Documentation result;
     const auto& children = node.contains("inner") ? node.at("inner") : empty_array;
     const auto full = std::find_if(children.begin(), children.end(), [](const Json& child) {
         return child.value("kind", "") == "FullComment";
     });
-    if (full == children.end()) return {};
-    std::vector<std::string> paragraphs, parameters;
-    std::string returns;
-    for (const auto& part : full->contains("inner") ? full->at("inner") : empty_array) {
+    if (full == children.end()) return result;
+    const CommentReader reader(*full);
+    const auto& parts = full->contains("inner") ? full->at("inner") : empty_array;
+    const bool explicit_brief = std::any_of(parts.begin(), parts.end(), [](const Json& part) {
+        const auto name = part.value("name", "");
+        return part.value("kind", "") == "BlockCommandComment" && (name == "brief" || name == "short");
+    });
+    // Paragraph text accumulates across inline math, which Clang splits out of the paragraph.
+    std::vector<std::string> pending;
+    const auto flush = [&] {
+        auto text = tidy_lines(pending);
+        pending.clear();
+        if (text.empty()) return;
+        if (!explicit_brief && result.brief.empty() && result.details.empty()) result.brief = std::move(text);
+        else result.details.push_back({"text", std::move(text), {}});
+    };
+    static const std::set<std::string> structural = {"fn", "var", "property", "typedef", "def", "overload", "namespace",
+        "class", "struct", "union", "enum", "file", "interface", "protocol", "category", "headerfile", "ingroup",
+        "addtogroup", "defgroup", "weakgroup", "name", "dir", "page", "mainpage", "subpage", "internal", "private",
+        "privatesection", "protected", "protectedsection", "public", "publicsection", "nosubgrouping", "showinitializer",
+        "hideinitializer", "callgraph", "callergraph", "hidecallgraph", "hidecallergraph"};
+    static const std::set<std::string> hidden_blocks = {"htmlonly", "latexonly", "manonly", "rtfonly", "xmlonly",
+        "docbookonly", "dot", "msc", "startuml", "uml", "secreflist", "internal"};
+    for (std::size_t index = 0; index < parts.size(); ++index) {
+        const auto& part = parts[index];
         const auto kind = part.value("kind", "");
-        std::string body;
-        for (const auto& paragraph : part.contains("inner") ? part.at("inner") : empty_array)
-            if (paragraph.value("kind", "") == "ParagraphComment") {
-                auto text = comment_paragraph(paragraph);
-                if (!text.empty()) body += (body.empty() ? "" : "\n") + text;
+        const auto name = part.value("name", "");
+        if (kind == "VerbatimBlockComment" && name == "f$") {
+            // Inline math continues the surrounding paragraph.
+            auto math = verbatim_text(part);
+            if (pending.empty()) pending.emplace_back();
+            auto& text = pending.back();
+            if (!text.empty() && text.back() != ' ') text += ' ';
+            text += "`" + trim(math) + "`";
+            const auto next = index + 1 < parts.size() ? &parts[index + 1] : nullptr;
+            if (next && next->value("kind", "") == "ParagraphComment") {
+                long at = reader.line(part);
+                const auto& inner = next->contains("inner") ? next->at("inner") : empty_array;
+                const auto first_line = inner.empty() ? -1 : reader.line(inner.front());
+                if (first_line >= 0 && at >= 0 && first_line <= at + 1) {
+                    reader.paragraph(*next, pending, at);
+                    ++index;
+                }
             }
+            continue;
+        }
         if (kind == "ParagraphComment") {
-            auto text = comment_paragraph(part);
-            if (!text.empty()) paragraphs.push_back(std::move(text));
-        } else if (kind == "ParamCommandComment" || kind == "TParamCommandComment") {
-            if (!body.empty()) parameters.push_back(part.value("param", "") + ": " + body);
+            flush();
+            long at = -1;
+            reader.paragraph(part, pending, at);
+            continue;
+        }
+        flush();
+        if (kind == "ParamCommandComment") {
+            DocItem item{part.value("param", ""), reader.body(part), part.value("explicit", false) ? part.value("direction", "") : ""};
+            if (!item.name.empty()) result.params.push_back(std::move(item));
+        } else if (kind == "TParamCommandComment") {
+            DocItem item{part.value("param", ""), reader.body(part), {}};
+            if (!item.name.empty()) result.tparams.push_back(std::move(item));
         } else if (kind == "BlockCommandComment") {
-            const auto name = part.value("name", "");
-            if (body.empty()) continue;
-            if (name == "return" || name == "returns" || name == "result") returns = body;
-            else if (name == "brief" || name == "details" || name == "short") paragraphs.push_back(body);
-            else paragraphs.push_back(name + ": " + body);
+            auto text = reader.body(part);
+            std::string argument;
+            if (part.contains("args"))
+                for (const auto& word : part.at("args")) argument += (argument.empty() ? "" : " ") + word.get<std::string>();
+            if (name == "brief" || name == "short") {
+                if (!text.empty()) result.brief += (result.brief.empty() ? "" : "\n") + text;
+            } else if (name == "details") {
+                if (!text.empty()) result.details.push_back({"text", text, {}});
+            } else if (name == "return" || name == "returns" || name == "result") {
+                if (!text.empty()) result.returns += (result.returns.empty() ? "" : "\n") + text;
+            } else if (name == "throw" || name == "throws" || name == "exception") {
+                result.throws.push_back({argument, text, {}});
+            } else if (name == "retval") {
+                result.retvals.push_back({argument, text, {}});
+            } else if (name == "see" || name == "sa") {
+                std::string joined = text;
+                for (auto& c : joined) if (c == '\n') c = ' ';
+                std::size_t start = 0;
+                while (start <= joined.size()) {
+                    const auto comma = joined.find(',', start);
+                    auto entry = trim(joined.substr(start, comma == std::string::npos ? std::string::npos : comma - start));
+                    if (!entry.empty()) result.see.push_back(entry);
+                    if (comma == std::string::npos) break;
+                    start = comma + 1;
+                }
+            } else if (name == "par") {
+                if (!argument.empty()) result.details.push_back({"heading", argument, {}});
+                if (!text.empty()) result.details.push_back({"text", text, {}});
+            } else if (!text.empty()) {
+                result.notes.push_back({name == "remarks" ? "remark" : name == "attention" ? "warning" : name, text, {}});
+            }
         } else if (kind == "VerbatimBlockComment") {
-            std::string text;
-            for (const auto& line : part.contains("inner") ? part.at("inner") : empty_array)
-                text += (text.empty() ? "" : "\n") + line.value("text", "");
-            if (!text.empty()) paragraphs.push_back(text);
+            if (hidden_blocks.count(name)) continue;
+            std::string language;
+            auto text = verbatim_text(part, &language);
+            if (text.empty()) continue;
+            const bool math = name == "f[" || name == "f{";
+            result.details.push_back({math ? "math" : "code", std::move(text), math ? std::string() : language});
         } else if (kind == "VerbatimLineComment") {
-            auto text = comment_line(part.value("text", ""));
-            if (!text.empty()) paragraphs.push_back(text);
+            if (structural.count(name)) continue;
+            auto text = trim(part.value("text", ""));
+            if (!text.empty()) result.details.push_back({"text", text, {}});
         }
     }
-    std::string result;
-    for (const auto& paragraph : paragraphs) result += (result.empty() ? "" : "\n\n") + paragraph;
-    if (!parameters.empty()) {
-        result += (result.empty() ? "" : "\n\n") + std::string("Parameters:");
-        for (const auto& parameter : parameters) result += "\n    " + parameter;
-    }
-    if (!returns.empty()) result += (result.empty() ? "" : "\n\n") + std::string("Returns: ") + returns;
+    flush();
     return result;
+}
+
+
+// The literal value of a default argument expression, seen through implicit conversions.
+DefaultValue default_value(const Json& parameter) {
+    if (!parameter.contains("init") || !parameter.contains("inner")) return {};
+    const Json* expression = nullptr;
+    for (const auto& child : parameter.at("inner")) {
+        const auto kind = child.value("kind", "");
+        if (kind.empty() || kind == "FullComment" || (kind.size() > 4 && kind.compare(kind.size() - 4, 4, "Attr") == 0)) continue;
+        expression = &child;
+        break;
+    }
+    static const std::set<std::string> wrappers = {"ImplicitCastExpr", "ExprWithCleanups", "CXXBindTemporaryExpr",
+        "MaterializeTemporaryExpr", "ConstantExpr", "ParenExpr", "CXXFunctionalCastExpr", "CStyleCastExpr", "CXXStaticCastExpr"};
+    bool to_floating = false;
+    bool negative = false;
+    while (expression) {
+        const auto kind = expression->value("kind", "");
+        const auto& inner = expression->contains("inner") ? expression->at("inner") : empty_array;
+        if (kind == "ImplicitCastExpr" && expression->value("castKind", "") == "IntegralToFloating") to_floating = true;
+        if (wrappers.count(kind) && !inner.empty()) { expression = &inner.front(); continue; }
+        if (kind == "UnaryOperator" && expression->value("opcode", "") == "-" && !inner.empty() && !negative) {
+            negative = true;
+            expression = &inner.front();
+            continue;
+        }
+        if (kind == "CXXConstructExpr" || kind == "CXXTemporaryObjectExpr") {
+            // A converting construction from one literal (std::string s = "x"); anything else is `T()`/`{}`.
+            std::vector<const Json*> given;
+            for (const auto& argument : inner)
+                if (argument.value("kind", "") != "CXXDefaultArgExpr") given.push_back(&argument);
+            if (given.size() == 1 && kind == "CXXConstructExpr") { expression = given.front(); continue; }
+            return given.empty() ? DefaultValue{"default", {}} : DefaultValue{};
+        }
+        break;
+    }
+    if (!expression) return {};
+    const auto kind = expression->value("kind", "");
+    const auto sign = negative ? std::string("-") : std::string();
+    const auto text = [&] {
+        const auto& value = expression->at("value");
+        return value.is_string() ? value.get<std::string>() : value.dump();
+    };
+    if (kind == "IntegerLiteral" && expression->contains("value"))
+        return to_floating ? DefaultValue{"float", sign + text() + ".0"} : DefaultValue{"int", sign + text()};
+    if (kind == "FloatingLiteral" && expression->contains("value")) {
+        auto value = text();
+        if (value.find_first_of(".eEn") == std::string::npos) value += ".0";
+        return {"float", sign + value};
+    }
+    if (negative) return {};
+    if (kind == "CXXBoolLiteralExpr") return {"bool", expression->value("value", false) ? "true" : "false"};
+    if (kind == "CXXNullPtrLiteralExpr" || kind == "GNUNullExpr") return {"null", {}};
+    if (kind == "StringLiteral" && expression->contains("value")) {
+        const auto value = text();
+        if (value.empty() || value.front() != '"') return {}; // u8"", L"", R"()"
+        return {"string", value};
+    }
+    if (kind == "CharacterLiteral" && expression->contains("value")) {
+        const auto code = expression->at("value").get<long long>();
+        if (code >= 32 && code < 127 && code != '\'' && code != '\\') return {"char", std::string(1, static_cast<char>(code))};
+        return {};
+    }
+    if (kind == "InitListExpr" || kind == "CXXScalarValueInitExpr" || kind == "ImplicitValueInitExpr") {
+        const auto& inner = expression->contains("inner") ? expression->at("inner") : empty_array;
+        const bool written = std::any_of(inner.begin(), inner.end(), [](const Json& child) {
+            return child.value("kind", "") != "CXXDefaultInitExpr" && child.value("kind", "") != "ImplicitValueInitExpr";
+        });
+        return written ? DefaultValue{} : DefaultValue{"default", {}};
+    }
+    if (kind == "DeclRefExpr" && expression->contains("referencedDecl")) {
+        const auto& declaration = expression->at("referencedDecl");
+        const auto referenced = declaration.value("kind", "");
+        if (referenced == "EnumConstantDecl") return {"enum", declaration.value("name", "")};
+        if (referenced == "VarDecl") return {"constant", declaration.value("name", "")};
+    }
+    return {};
 }
 
 bool has_attribute(const Json& node, const char* kind) {
@@ -257,8 +498,17 @@ private:
         for (auto& function : functions) {
             const auto inserted = identities.emplace(function.identity(), unique.size());
             if (inserted.second) unique.push_back(std::move(function));
-            else unique[inserted.first->second].default_arguments =
-                std::max(unique[inserted.first->second].default_arguments, function.default_arguments);
+            else {
+                auto& kept = unique[inserted.first->second];
+                kept.default_arguments = std::max(kept.default_arguments, function.default_arguments);
+                // Defaults and documentation may be written on any one redeclaration.
+                for (std::size_t i = 0; i < function.default_values.size() && i < kept.default_values.size(); ++i)
+                    if (kept.default_values[i].kind.empty()) kept.default_values[i] = function.default_values[i];
+                if (kept.documentation.empty() && !function.documentation.empty()) {
+                    kept.documentation = std::move(function.documentation);
+                    kept.doc = std::move(function.doc);
+                }
+            }
         }
         functions = std::move(unique);
     }
@@ -567,7 +817,8 @@ private:
         result.is_deleted = node.value("explicitlyDeleted", false);
         result.is_virtual = node.value("virtual", false) || has_attribute(node, "OverrideAttr") || has_attribute(node, "FinalAttr");
         result.is_pure = node.value("pure", false);
-        result.doc = comment_text(node);
+        result.documentation = comment_documentation(node);
+        result.doc = plain_documentation(result.documentation);
         const auto signature = node.at("type").at("qualType").get<std::string>();
         if (result.is_deleted) result.unsupported_reason = "deleted functions are unsupported";
         if (node.value("immediate", false)) result.unsupported_reason = "consteval functions require a constant-expression facade";
@@ -577,6 +828,7 @@ private:
         for (const auto& child : children) {
             if (child.value("kind", "") != "ParmVarDecl") continue;
             if (child.contains("init")) ++result.default_arguments;
+            result.default_values.push_back(default_value(child));
             const auto& type = child.at("type");
             const auto spelling = type.at("qualType").get<std::string>();
             result.parameters.push_back({spelling, type.value("desugaredQualType", spelling)});
@@ -612,7 +864,8 @@ private:
         }
         enumeration.selected = own;
         enumeration.location = source;
-        enumeration.doc = comment_text(node);
+        enumeration.documentation = comment_documentation(node);
+        enumeration.doc = plain_documentation(enumeration.documentation);
         const auto& children = node.contains("inner") ? node.at("inner") : empty_array;
         for (const auto& child : children) {
             if (child.value("kind", "") != "EnumConstantDecl") continue;
@@ -640,7 +893,8 @@ private:
         const bool outermost = record_depth_++ == 0;
         Record record;
         record.name = name_override.empty() ? node.at("name").get<std::string>() : name_override;
-        record.doc = comment_text(node);
+        record.documentation = comment_documentation(node);
+        record.doc = plain_documentation(record.documentation);
         record.polymorphic = node.value("definitionData", empty_object).value("isPolymorphic", false);
         record.is_final = has_attribute(node, "FinalAttr");
         if (node.contains("bases"))
@@ -708,9 +962,11 @@ private:
                 if (kind == "FieldDecl") {
                     const auto& type = child.at("type");
                     const auto spelling = type.at("qualType").get<std::string>();
+                    auto documentation = comment_documentation(child);
+                    auto text = plain_documentation(documentation);
                     record.fields.push_back({child.value("name", "<anonymous>"),
                         {spelling, type.value("desugaredQualType", spelling)}, access, child.value("isBitfield", false), child_location,
-                        comment_text(child)});
+                        std::move(text), std::move(documentation)});
                 }
                 if (kind == "VarDecl" && child.contains("name") && child.value("storageClass", "") == "static") {
                     const auto& type = child.at("type");
@@ -723,7 +979,8 @@ private:
                     variable.access = access;
                     variable.is_constexpr = child.value("constexpr", false);
                     variable.location = child_location;
-                    variable.doc = comment_text(child);
+                    variable.documentation = comment_documentation(child);
+                    variable.doc = plain_documentation(variable.documentation);
                     record.static_fields.push_back(std::move(variable));
                 }
             }
@@ -1049,7 +1306,8 @@ private:
             variable.type = {spelling, type.value("desugaredQualType", spelling)};
             variable.is_constexpr = node.value("constexpr", false);
             variable.location = source_location;
-            variable.doc = comment_text(node);
+            variable.documentation = comment_documentation(node);
+            variable.doc = plain_documentation(variable.documentation);
             resolve(variable.type, namespaces);
             module_.variables.push_back(std::move(variable));
         }

@@ -1,6 +1,8 @@
 import gc
 import importlib.util
+import inspect
 import sys
+import textwrap
 import unittest
 import weakref
 
@@ -295,6 +297,79 @@ class Values(unittest.TestCase):
         self.assertIn("Area of the shape.", f.Shape.area.__doc__)
         self.assertIn("pick(arg0: int) -> str", f.pick.__doc__)
         self.assertIn("Abstract shape", f.Shape.__doc__)
+
+    def test_doxygen_numpy_docstrings(self):
+        self.assertEqual(inspect.getdoc(f.add), textwrap.dedent("""\
+            Adds three integers, Socha & Dorigo style.
+            The brief continues on a second line.
+
+            Uses `int` arithmetic and **no** overflow checks; the sum is `a + b + c` for
+            every call.
+            - first item
+              continued
+            - second item
+
+            Parameters
+            ----------
+            a : int
+                first term
+            b : int, default 10
+                second term
+            c : int, default 100
+                third term
+
+            Returns
+            -------
+            int
+                the sum
+
+            Raises
+            ------
+            IndexError
+                never, in practice
+
+            Warnings
+            --------
+            Signed overflow is undefined.
+
+            See Also
+            --------
+            pick
+            sum
+
+            Notes
+            -----
+            Defaults keep the result small.
+
+            Examples
+            --------
+            .. code-block:: cpp
+
+                int total = add(1);  // 111"""))
+        circle = inspect.getdoc(f.Circle)
+        self.assertTrue(circle.startswith("A circle with area 3r² (a crude π).\n\nParameters\n----------\nradius : float\n"
+                                          "    distance from the centre; must not be negative"), circle)
+        self.assertIn("Raises\n------\nValueError\n    when `radius` < 0", circle)
+        vec = inspect.getdoc(f.Vec2)
+        self.assertIn("Attributes\n----------\nx : float\n    Horizontal component.\ny : float\n    Vertical component.", vec)
+        self.assertEqual(inspect.getdoc(f.Vec2.x), "Horizontal component.\n\nType: float")
+        self.assertEqual(inspect.getdoc(f.Kind), "Shape kinds.")
+        self.assertIn("kind : Kind, default Kind.square\nlabel : str, default \"x\"\nloud : bool, default False", f.defaults.__doc__)
+
+    def test_text_signatures(self):
+        self.assertEqual(str(inspect.signature(f.add)), "(a, b=10, c=100)")
+        # A keyword-named parameter is renamed and positional-only; enums default to their value.
+        self.assertEqual(str(inspect.signature(f.defaults)), "(kind=1, label='x', loud=False, weight=0.5, mark='*', _lambda=-2, /)")
+        self.assertEqual(f.defaults(), "x*1-1.500000")
+        self.assertEqual(str(inspect.signature(f.Circle)), "(radius)")
+        self.assertEqual(str(inspect.signature(f.Circle(1).radius)), "()")
+        self.assertEqual(str(inspect.signature(f.Vec2.inner)), "(self, /, other)")
+        with self.assertRaises(ValueError):  # overloads have no single signature
+            inspect.signature(f.pick)
+        # _set_doc keeps the signature.
+        f._set_doc(f.add, "Replaced.")
+        self.assertEqual(f.add.__doc__, "Replaced.")
+        self.assertEqual(str(inspect.signature(f.add)), "(a, b=10, c=100)")
 
 
 if __name__ == "__main__":

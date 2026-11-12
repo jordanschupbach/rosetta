@@ -32,8 +32,11 @@ public:
     static constexpr int sides_unknown = -1;
 };
 
+/// @brief A circle with area 3r² (a crude π).
 class Circle : public Shape {
 public:
+    /// @param radius distance from the centre; must not be negative
+    /// @throws std::invalid_argument when @p radius < 0
     explicit Circle(double radius) : radius_(radius) {
         if (radius < 0) throw std::invalid_argument("negative radius");
     }
@@ -96,7 +99,33 @@ inline std::string pick(double) { return "double"; }
 inline std::string pick(const std::string&) { return "string"; }
 inline std::string pick(const std::vector<double>&) { return "vector"; }
 inline std::string pick(const Shape&) { return "shape"; }
+/// @brief Adds three integers, Socha & Dorigo style.
+///        The brief continues on a second line.
+///
+/// Uses @c int arithmetic and <b>no</b> overflow checks; the sum is @f$ a + b + c @f$ for
+/// every call.
+/// - first item
+///   continued
+/// - second item
+///
+/// @param a first term
+/// @param b second term
+/// @param c third term
+/// @return the sum
+/// @throws std::out_of_range never, in practice
+/// @note Defaults keep the result small.
+/// @warning Signed overflow is undefined.
+/// @see pick, sum
+/// @par Example
+/// @code
+/// int total = add(1);  // 111
+/// @endcode
 inline int add(int a, int b = 10, int c = 100) { return a + b + c; }
+/// Default values of every literal kind.
+inline std::string defaults(Kind kind = Kind::square, const std::string& label = "x", bool loud = false, double weight = 0.5,
+                            char mark = '*', int lambda = -2) {
+    return label + mark + std::to_string(static_cast<int>(kind)) + (loud ? "!" : "") + std::to_string(weight + lambda);
+}
 
 // Containers and in-place updates.
 inline void scale(std::vector<double>& values, double factor) { for (auto& value : values) value *= factor; }
@@ -138,7 +167,8 @@ inline std::vector<Circle> circles(int count) {
 
 /// Value type with operators and chaining.
 struct Vec2 {
-    double x = 0, y = 0;
+    double x = 0; ///< Horizontal component.
+    double y = 0; ///< Vertical component.
     Vec2() = default;
     Vec2(double x, double y) : x(x), y(y) {}
     Vec2 operator+(const Vec2& other) const { return {x + other.x, y + other.y}; }

@@ -32,6 +32,47 @@ struct SourceLocation {
     std::size_t offset = 0;
 };
 
+// A documentation comment parsed from its Doxygen/Javadoc commands, for backends to render in
+// their language's convention. Text uses markup every target reads: `code`, **bold**, *emphasis*;
+// line breaks are kept so lists survive, and list continuation lines are indented two spaces.
+struct DocBlock {
+    std::string kind;     // "text", "code" (verbatim lines), "math" or "heading" (@par title)
+    std::string text;
+    std::string language; // code only: the language named by @code{.py}, empty otherwise
+};
+
+struct DocItem {
+    std::string name;      // parameter, exception type, return value or command name
+    std::string text;
+    std::string direction; // @param[in], [out] or [in,out]; empty unless written
+};
+
+struct Documentation {
+    std::string brief;                 // @brief, or the first paragraph without one
+    std::vector<DocBlock> details;     // the rest of the description, in source order
+    std::vector<DocItem> params, tparams, throws, retvals;
+    std::string returns;
+    std::vector<DocItem> notes;        // name: note, warning, deprecated, pre, post, since, todo, ...
+    std::vector<std::string> see;      // @see/@sa targets as written
+
+    bool empty() const {
+        return brief.empty() && details.empty() && params.empty() && tparams.empty() && throws.empty() &&
+               retvals.empty() && returns.empty() && notes.empty() && see.empty();
+    }
+};
+
+// Plain text rendering of a documentation comment (the `doc` strings below).
+std::string plain_documentation(const Documentation& documentation);
+
+// A default argument, when its value is a literal a binding can show or reuse.
+struct DefaultValue {
+    // "" (none or not representable), "int", "float", "bool", "null", "string" (value is a C++
+    // string literal with quotes), "char" (value is the character), "enum" (value is the
+    // enumerator name), "constant" (value is the variable's name) or "default" (`{}`, `T()`).
+    std::string kind;
+    std::string value;
+};
+
 struct Function {
     std::string name;
     std::vector<std::string> namespaces;
@@ -51,10 +92,13 @@ struct Function {
     bool is_pure = false;
     // Plain text of the attached documentation comment, empty without one.
     std::string doc{};
+    Documentation documentation{};
     // Number of trailing parameters whose defaults are visible at the header entry point.
     std::size_t default_arguments = 0;
     // Declared parameter names, empty where unnamed; parallel to parameters.
     std::vector<std::string> parameter_names{};
+    // Default argument values, parallel to parameters (kind empty where there is none or it is not a literal).
+    std::vector<DefaultValue> default_values{};
     // Primary template of a requested function template specialization (name is then f<args>).
     std::string template_name{};
 
@@ -69,6 +113,7 @@ struct Field {
     bool bitfield = false;
     SourceLocation location{};
     std::string doc{};
+    Documentation documentation{};
 };
 
 // Namespace-scope or static member variables. Constant initializers stay in C++:
@@ -82,6 +127,7 @@ struct Variable {
     bool is_constexpr = false;
     SourceLocation location{};
     std::string doc{};
+    Documentation documentation{};
 
     std::string qualified_name() const;
 };
@@ -114,6 +160,7 @@ struct Record {
     // Primary template of an explicitly requested specialization, empty otherwise.
     std::string template_name{};
     std::string doc{};
+    Documentation documentation{};
 
     std::string qualified_name() const;
 };
@@ -131,6 +178,7 @@ struct Enumeration {
     std::vector<std::string> enumerator_values{};
     std::string underlying_type{};
     std::string doc{};
+    Documentation documentation{};
 
     std::string qualified_name() const;
 };

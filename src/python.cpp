@@ -2,6 +2,7 @@
 #include "python_runtime.hpp"
 #include "type_spelling.hpp"
 #include <algorithm>
+#include <cctype>
 #include <functional>
 #include <map>
 #include <set>
@@ -20,6 +21,84 @@ std::string quote(const std::string& text) {
     }
     return result + '"';
 }
+// --- Docstrings -------------------------------------------------------------
+//
+// Doxygen comments become NumPy-style docstrings: summary, extended description, then
+// Parameters/Returns/Raises/See Also/Notes and the comment's own @par sections. Functions with
+// one overload start with a text signature ("name($self, a, b=1.0)\n--\n\n") so
+// inspect.signature() works on them.
+
+std::string indent_lines(const std::string& text, const std::string& indent) {
+    std::string out;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const auto end = text.find('\n', start);
+        const auto line = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        out += (out.empty() && start == 0 ? "" : "\n") + (line.empty() ? std::string() : indent + line);
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return out;
+}
+
+std::string python_exception(std::string name) {
+    if (name.rfind("std::", 0) == 0) name.erase(0, 5);
+    if (name == "invalid_argument" || name == "domain_error" || name == "length_error") return "ValueError";
+    if (name == "out_of_range") return "IndexError";
+    if (name == "overflow_error") return "OverflowError";
+    return "RuntimeError";
+}
+
+std::string section_title(std::string title) {
+    while (!title.empty() && (title.back() == ':' || title.back() == ' ')) title.pop_back();
+    std::string lower;
+    for (const char c : title) lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (lower == "example" || lower == "examples" || lower == "usage") return "Examples";
+    if (lower == "reference" || lower == "references") return "References";
+    if (lower == "note" || lower == "notes") return "Notes";
+    if (lower == "warning" || lower == "warnings") return "Warnings";
+    if (lower == "see also") return "See Also";
+    return title;
+}
+
+// One documentation block as docstring text.
+std::string block_text(const DocBlock& block) {
+    if (block.kind == "math") return ".. math::\n\n" + indent_lines(block.text, "    ");
+    if (block.kind != "code") return block.text;
+    std::string language = block.language;
+    if (language == "py" || language == "python" || language == "pycon") {
+        if (block.text.rfind(">>>", 0) == 0) return block.text;
+        language = "python";
+    } else if (language.empty() || language == "cpp" || language == "c++" || language == "cxx" || language == "cc") {
+        language = "cpp";
+    }
+    return ".. code-block:: " + language + "\n\n" + indent_lines(block.text, "    ");
+}
+
+// Ordered NumPy sections; a repeated title appends to the existing section.
+struct Sections {
+    std::vector<std::pair<std::string, std::string>> items;
+    void add(const std::string& title, const std::string& text) {
+        if (text.empty()) return;
+        for (auto& item : items)
+            if (item.first == title) { item.second += "\n" + text; return; }
+        items.emplace_back(title, text);
+    }
+    std::string render() const {
+        static const std::vector<std::string> order = {"Parameters", "Attributes", "Returns", "Raises", "Warnings", "See Also",
+                                                       "Notes", "References", "Examples"};
+        std::vector<const std::pair<std::string, std::string>*> sorted;
+        for (const auto& name : order)
+            for (const auto& item : items) if (item.first == name) sorted.push_back(&item);
+        for (const auto& item : items)
+            if (std::find(order.begin(), order.end(), item.first) == order.end()) sorted.push_back(&item);
+        std::string out;
+        for (const auto* item : sorted)
+            out += (out.empty() ? "" : "\n\n") + item->first + "\n" + std::string(item->first.size(), '-') + "\n" + item->second;
+        return out;
+    }
+};
+
 std::string exported(std::string text) {
     for (std::size_t i = 0; (i = text.find("::", i)) != std::string::npos; i += 2) text.replace(i, 2, "__");
     return text;
@@ -185,7 +264,14 @@ private:
     std::string function_problem(const Function& function, bool self_parameter) const;
     std::string display(const Type& type) const;
     std::string signature(const Overload& overload, const std::string& python) const;
-    std::string documentation(const std::vector<Overload>& overloads, const std::string& python) const;
+    std::string documentation(const std::vector<Overload>& overloads, const std::string& python, bool method = false) const;
+    std::string python_default(const DefaultValue& value, const Type& type) const;
+    std::string text_signature(const Overload& overload, const std::string& python, bool method = false) const;
+    std::string parameter_name(const Function& function, std::size_t index) const;
+    std::string numpy_doc(const std::vector<Overload>& overloads, const std::vector<const Field*>& fields,
+                          const Documentation* own) const;
+    std::string record_documentation(const ClassPlan& plan) const;
+    std::string field_documentation(const Field& field) const;
     std::string return_policy(const Function& function) const;
     std::string class_python_name(const Record& record) const;
     // A reference (or field) of a policy copy type is returned as a copy.
@@ -459,18 +545,216 @@ std::string Generator::signature(const Overload& overload, const std::string& py
     return result;
 }
 
-std::string Generator::documentation(const std::vector<Overload>& overloads, const std::string& python) const {
-    std::string signatures, docs;
-    std::set<std::string> seen;
-    for (const auto& overload : overloads) {
-        signatures += signature(overload, python) + "\n";
-        const auto& function = *overload.function;
-        auto doc = function.doc;
-        const auto override_doc = policy_.docs.find(function.qualified_name());
-        if (override_doc != policy_.docs.end()) doc = override_doc->second;
-        if (!doc.empty() && seen.insert(doc).second) docs += (docs.empty() ? "" : "\n\n") + doc;
+std::string Generator::parameter_name(const Function& function, std::size_t index) const {
+    return index < function.parameter_names.size() && !function.parameter_names[index].empty()
+        ? function.parameter_names[index] : "arg" + std::to_string(index);
+}
+
+// A default value Python can evaluate in a text signature, or "" to show `...`.
+std::string Generator::python_default(const DefaultValue& value, const Type& type) const {
+    if (value.kind == "int" || value.kind == "float") return value.value;
+    if (value.kind == "bool") return value.value == "true" ? "True" : "False";
+    if (value.kind == "null") return "None";
+    if (value.kind == "string") return value.value;
+    if (value.kind == "char") return "'" + value.value + "'";
+    if (value.kind == "enum") {
+        // The enumerator's integer: text signatures cannot name module attributes reliably.
+        const auto& target = referent(type);
+        for (const auto& enumeration : module_.enumerations) {
+            if (enumeration.qualified_name() != target.declaration) continue;
+            for (std::size_t i = 0; i < enumeration.enumerators.size() && i < enumeration.enumerator_values.size(); ++i)
+                if (enumeration.enumerators[i] == value.value) return enumeration.enumerator_values[i];
+        }
     }
-    return signatures + (docs.empty() ? "" : "\n" + docs);
+    return {};
+}
+
+std::string Generator::text_signature(const Overload& overload, const std::string& python, bool method) const {
+    const auto& function = *overload.function;
+    const std::size_t first = overload.receives_self ? 1 : 0;
+    const std::size_t required = function.parameters.size() - function.default_arguments;
+    std::vector<std::string> parameters;
+    if (overload.receives_self || method) parameters.push_back("$self");
+    std::size_t positional_only = 0; // parameters that cannot be passed by keyword
+    for (std::size_t i = first; i < function.parameters.size(); ++i) {
+        const auto& written = i < function.parameter_names.size() ? function.parameter_names[i] : std::string{};
+        auto name = written;
+        if (written.empty() || keyword_safe(written) != written) {
+            name = written.empty() ? "arg" + std::to_string(i - first) : keyword_safe(written);
+            positional_only = parameters.size() + 1;
+        }
+        if (i >= required) {
+            const auto value = i < function.default_values.size() ? python_default(function.default_values[i], function.parameters[i])
+                                                                    : std::string();
+            name += "=" + (value.empty() ? std::string("...") : value);
+        }
+        parameters.push_back(name);
+    }
+    std::string result = python + "(";
+    for (std::size_t i = 0; i < parameters.size(); ++i) {
+        result += (i ? ", " : "") + parameters[i];
+        if (i + 1 == positional_only) result += ", /";
+    }
+    return result + ")";
+}
+
+std::string Generator::numpy_doc(const std::vector<Overload>& overloads, const std::vector<const Field*>& fields,
+                                 const Documentation* own) const {
+    std::string prose;
+    const auto paragraph = [&](const std::string& text) {
+        if (!text.empty()) prose += (prose.empty() ? "" : "\n\n") + text;
+    };
+    Sections sections;
+    std::set<std::string> seen_docs;
+    std::vector<const Documentation*> docs;
+    if (own && !own->empty()) docs.push_back(own);
+    for (const auto& overload : overloads) {
+        const auto& documentation = overload.function->documentation;
+        if (!documentation.empty() && seen_docs.insert(plain_documentation(documentation)).second) docs.push_back(&documentation);
+    }
+    std::vector<std::string> deprecated;
+    for (const auto* documentation : docs) {
+        paragraph(documentation->brief);
+        std::string section;
+        for (const auto& block : documentation->details) {
+            if (block.kind == "heading") { section = section_title(block.text); continue; }
+            if (section.empty()) paragraph(block_text(block));
+            else sections.add(section, (sections.items.empty() || sections.items.back().first != section ? "" : "\n") + block_text(block));
+        }
+        std::string warnings, notes;
+        for (const auto& note : documentation->notes) {
+            if (note.name == "deprecated") { deprecated.push_back(note.text); continue; }
+            if (note.name == "warning") { warnings += (warnings.empty() ? "" : "\n\n") + note.text; continue; }
+            std::string label;
+            if (note.name == "pre") label = "Precondition: ";
+            else if (note.name == "post") label = "Postcondition: ";
+            else if (note.name == "invariant") label = "Invariant: ";
+            else if (note.name != "note" && note.name != "remark") {
+                label = note.name;
+                label[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(label[0])));
+                label += ": ";
+            }
+            notes += (notes.empty() ? "" : "\n\n") + label + note.text;
+        }
+        sections.add("Warnings", warnings);
+        sections.add("Notes", notes);
+        std::string see;
+        for (const auto& target : documentation->see) see += (see.empty() ? "" : "\n") + target;
+        sections.add("See Also", see);
+    }
+    for (const auto& text : deprecated) prose = ".. deprecated::\n" + indent_lines(text, "    ") + (prose.empty() ? "" : "\n\n" + prose);
+
+    // Parameters, merged across overloads by name.
+    struct Entry { std::string name, type, text; };
+    std::vector<Entry> parameters;
+    std::string returns;
+    std::set<std::string> return_types;
+    std::string raises;
+    std::set<std::string> raised;
+    for (const auto& overload : overloads) {
+        const auto& function = *overload.function;
+        const auto& documentation = function.documentation;
+        const std::size_t first = overload.receives_self ? 1 : 0;
+        const std::size_t required = function.parameters.size() - function.default_arguments;
+        for (std::size_t i = first; i < function.parameters.size(); ++i) {
+            const auto cpp_name = i < function.parameter_names.size() ? function.parameter_names[i] : std::string();
+            const auto name = cpp_name.empty() ? "arg" + std::to_string(i - first) : keyword_safe(cpp_name);
+            auto type = display(function.parameters[i]);
+            if (i >= required) {
+                const auto& value = i < function.default_values.size() ? function.default_values[i] : DefaultValue{};
+                auto shown = python_default(value, function.parameters[i]);
+                if (value.kind == "enum")
+                    shown = type + "." + renamed(referent(function.parameters[i]).declaration + "::" + value.value, keyword_safe(value.value));
+                if (value.kind == "constant") shown = "`" + value.value + "`";
+                type += shown.empty() ? ", optional" : ", default " + shown;
+            }
+            std::string text;
+            for (const auto& item : documentation.params)
+                if (item.name == cpp_name) text = item.text;
+            const auto existing = std::find_if(parameters.begin(), parameters.end(), [&](const Entry& e) { return e.name == name; });
+            if (existing == parameters.end()) parameters.push_back({name, type, text});
+            else {
+                if (existing->type != type && existing->type.find(" or " + type) == std::string::npos) existing->type += " or " + type;
+                if (existing->text.empty()) existing->text = text;
+            }
+        }
+        if (!function.is_constructor) {
+            const auto type = display(function.result);
+            std::string text = documentation.returns;
+            for (const auto& value : documentation.retvals)
+                text += (text.empty() ? "" : "\n") + std::string("- `") + value.name + "`" + (value.text.empty() ? "" : ": " + value.text);
+            if ((type != "None" || !text.empty()) && return_types.insert(type + "\n" + text).second)
+                returns += (returns.empty() ? "" : "\n") + type + (text.empty() ? "" : "\n" + indent_lines(text, "    "));
+        }
+        for (const auto& item : documentation.throws) {
+            const auto exception = python_exception(item.name);
+            auto text = item.text;
+            if (exception == "RuntimeError" && !item.name.empty()) text = "`" + item.name + "`" + (text.empty() ? "" : ": " + text);
+            if (raised.insert(exception + "\n" + text).second)
+                raises += (raises.empty() ? "" : "\n") + exception + (text.empty() ? "" : "\n" + indent_lines(text, "    "));
+        }
+    }
+    std::string parameter_text;
+    for (const auto& entry : parameters)
+        parameter_text += (parameter_text.empty() ? "" : "\n") + entry.name + " : " + entry.type +
+            (entry.text.empty() ? "" : "\n" + indent_lines(entry.text, "    "));
+    sections.add("Parameters", parameter_text);
+    std::string attributes;
+    for (const auto* field : fields) {
+        auto text = field->documentation.brief;
+        for (const auto& block : field->documentation.details)
+            if (block.kind != "heading") text += (text.empty() ? "" : "\n") + block_text(block);
+        attributes += (attributes.empty() ? "" : "\n") + renamed(field->name, keyword_safe(field->name)) + " : " +
+            display(field->type) + (text.empty() ? "" : "\n" + indent_lines(text, "    "));
+    }
+    sections.add("Attributes", attributes);
+    sections.add("Returns", returns);
+    sections.add("Raises", raises);
+    const auto rendered = sections.render();
+    if (rendered.empty()) return prose;
+    return prose.empty() ? rendered : prose + "\n\n" + rendered;
+}
+
+std::string Generator::documentation(const std::vector<Overload>& overloads, const std::string& python, bool method) const {
+    std::string body;
+    std::string override_text;
+    for (const auto& overload : overloads) {
+        const auto found = policy_.docs.find(overload.function->qualified_name());
+        if (found != policy_.docs.end()) { override_text = found->second; break; }
+    }
+    body = override_text.empty() ? numpy_doc(overloads, {}, nullptr) : override_text;
+    if (overloads.size() == 1)
+        return text_signature(overloads.front(), python, method) + "\n--\n\n" + body;
+    std::string signatures;
+    for (const auto& overload : overloads) signatures += signature(overload, python) + "\n";
+    return signatures + (body.empty() ? "" : "\n" + body);
+}
+
+std::string Generator::field_documentation(const Field& field) const {
+    std::string text = field.documentation.brief;
+    for (const auto& block : field.documentation.details)
+        if (block.kind != "heading") text += (text.empty() ? "" : "\n\n") + block_text(block);
+    return text + (text.empty() ? "" : "\n\n") + "Type: " + display(field.type);
+}
+
+std::string enum_documentation(const Enumeration& enumeration) {
+    std::string text = enumeration.documentation.brief;
+    for (const auto& block : enumeration.documentation.details)
+        if (block.kind != "heading") text += (text.empty() ? "" : "\n\n") + block_text(block);
+    for (const auto& note : enumeration.documentation.notes) text += (text.empty() ? "" : "\n\n") + note.text;
+    return text;
+}
+
+std::string Generator::record_documentation(const ClassPlan& plan) const {
+    const auto& record = *plan.record;
+    const auto found = policy_.docs.find(record.qualified_name());
+    std::string body = found != policy_.docs.end() ? found->second : numpy_doc(plan.constructors, plan.fields, &record.documentation);
+    const auto short_name = plan.qualname.substr(plan.qualname.rfind('.') == std::string::npos ? 0 : plan.qualname.rfind('.') + 1);
+    if (plan.constructors.size() == 1)
+        return text_signature(plan.constructors.front(), short_name) + "\n--\n\n" + body;
+    std::string signatures;
+    for (const auto& overload : plan.constructors) signatures += signature(overload, plan.python) + "\n";
+    return signatures + (body.empty() ? "" : "\n" + body);
 }
 
 std::string Generator::return_policy(const Function& function) const {
@@ -1084,7 +1368,7 @@ GeneratedPythonSource Generator::run() {
             const auto symbol_name = emit_group(unit, group, is_static ? "function" : "method");
             methods << "    {" << quote(group.name) << ", reinterpret_cast<PyCFunction>(reinterpret_cast<void(*)()>(" << symbol_name
                     << ")), METH_VARARGS | METH_KEYWORDS" << (is_static ? " | METH_STATIC" : "") << ", "
-                    << quote(documentation(group.overloads, group.name)) << "},\n";
+                    << quote(documentation(group.overloads, group.name, !is_static)) << "},\n";
             if (slot_name(group.name)) slots.push_back(group.name);
         }
         for (const auto* field : plan.fields) {
@@ -1108,16 +1392,10 @@ GeneratedPythonSource Generator::run() {
             const auto setter = writable ? "std::is_copy_assignable_v<std::remove_cv_t<decltype(" + owner + "::" + field->name + ")>> ? "
                 + field_symbol + "_set : nullptr" : std::string("nullptr");
             getset << "    {" << quote(python) << ", " << field_symbol << "_get, " << setter
-                   << ", " << quote(field->doc) << ", nullptr},\n";
+                   << ", " << quote(field_documentation(*field)) << ", nullptr},\n";
         }
         const auto init_symbol = plan.constructors.empty() ? std::string("rosetta_py::abstract_init") : emit_constructor(unit, plan);
-        auto doc = record.doc;
-        if (const auto found = policy_.docs.find(owner); found != policy_.docs.end()) doc = found->second;
-        if (!plan.constructors.empty()) {
-            std::string constructors;
-            for (const auto& overload : plan.constructors) constructors += signature(overload, plan.python) + "\n";
-            doc = constructors + (doc.empty() ? "" : "\n" + doc);
-        }
+        const auto doc = record_documentation(plan);
         unit << "static PyMethodDef " << plan.symbol << "_methods[] = {\n" << methods.str() << "    {nullptr, nullptr, 0, nullptr}};\n"
             << "static PyGetSetDef " << plan.symbol << "_getset[] = {\n" << getset.str() << "    {nullptr, nullptr, nullptr, nullptr, nullptr}};\n"
             << "static PyType_Slot " << plan.symbol << "_slots[] = {\n"
@@ -1191,7 +1469,11 @@ GeneratedPythonSource Generator::run() {
         const bool flags = policy_.enum_flags.count(qualified) != 0;
         init << "        {\n            PyObject* enum_type = rosetta_py::make_enum(module, " << quote(flags ? "IntFlag" : "IntEnum") << ", "
              << quote(python) << ", " << quote(qualname) << ", {" << signed_members << "}, {" << unsigned_members << "});\n"
-             << "            rosetta_py::keep(module, enum_type);\n"
+             << "            rosetta_py::keep(module, enum_type);\n";
+        if (const auto doc = enum_documentation(enumeration); !doc.empty())
+            init << "            if (PyObject_SetAttrString(enum_type, \"__doc__\", rosetta_py::Ref(rosetta_py::checked(PyUnicode_FromString("
+                 << quote(doc) << "))).get()) < 0) throw rosetta_py::python_error{};\n";
+        init
              << "            Py_DECREF(enum_type);\n"
              << "            rosetta_py::enum_types()[std::type_index(typeid(" << qualified << "))] = enum_type;\n";
         if (!(flat_ && !nested && names.at(python) != "enum " + qualified)) {
