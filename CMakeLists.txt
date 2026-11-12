@@ -28,6 +28,8 @@ add_library(rosetta_core
     src/process.cpp
     src/frontend.cpp
     src/lua.cpp
+    src/lua_full.cpp
+    src/lisp_full.cpp
     src/r.cpp
     src/python.cpp
     src/r6.cpp
@@ -264,6 +266,39 @@ if(ROSETTA_BUILD_EXAMPLES)
         add_test(NAME readme_mep_runner COMMAND "${ROSETTA_LUA_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_readme_runners.lua")
         set_tests_properties(readme_mep_runner PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+        # The full Lua API on the example shared with the Python and R6 backends.
+        rosetta_generate_lua(HEADER "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.hpp" MODULE features
+            CLANG "${ROSETTA_CLANG_EXECUTABLE}" OUTPUT "${generated_dir}/lua_full/features.cpp"
+            POLICY "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.policy.json" LUA_API full PARTS 2)
+        add_library(rosetta_lua_full_features MODULE "${generated_dir}/lua_full/features.cpp" "${generated_dir}/lua_full/features_1.cpp")
+        target_compile_features(rosetta_lua_full_features PRIVATE cxx_std_17)
+        target_include_directories(rosetta_lua_full_features PRIVATE "${LUA_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+        target_link_libraries(rosetta_lua_full_features PRIVATE ${LUA_LIBRARIES})
+        set_target_properties(rosetta_lua_full_features PROPERTIES PREFIX "" OUTPUT_NAME features
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lua-full")
+        if(APPLE)
+            target_link_options(rosetta_lua_full_features PRIVATE -undefined dynamic_lookup)
+        endif()
+        add_test(NAME lua_full_features COMMAND "${ROSETTA_LUA_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lua_full.lua"
+            "$<TARGET_FILE:rosetta_lua_full_features>" "${generated_dir}/lua_full/library/features.lua")
+        # The full Common Lisp API on the same example; needs SBCL with cffi and trivial-garbage
+        # on the ASDF source registry (the nix shell's CL_SOURCE_REGISTRY provides them).
+        find_program(ROSETTA_SBCL_EXECUTABLE NAMES sbcl)
+        if(ROSETTA_SBCL_EXECUTABLE)
+            rosetta_generate_common_lisp(HEADER "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.hpp" MODULE features
+                CLANG "${ROSETTA_CLANG_EXECUTABLE}" OUTPUT "${generated_dir}/lisp_full/features.cpp"
+                POLICY "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.policy.json"
+                LISP_API full LISP_NICKNAMES ft PARTS 2)
+            add_library(rosetta_lisp_full_features MODULE "${generated_dir}/lisp_full/features.cpp" "${generated_dir}/lisp_full/features_1.cpp")
+            target_compile_features(rosetta_lisp_full_features PRIVATE cxx_std_17)
+            target_include_directories(rosetta_lisp_full_features PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+            set_target_properties(rosetta_lisp_full_features PROPERTIES PREFIX "" OUTPUT_NAME features
+                LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/lisp-full")
+            add_test(NAME lisp_full_features COMMAND "${ROSETTA_SBCL_EXECUTABLE}" --noinform --non-interactive
+                --load "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lisp_full.lisp" "${generated_dir}/lisp_full/features.asd")
+            set_tests_properties(lisp_full_features PROPERTIES
+                ENVIRONMENT "FEATURES_LISP_LIBRARY=$<TARGET_FILE:rosetta_lisp_full_features>")
+        endif()
         add_test(NAME lua_scalar COMMAND "${ROSETTA_LUA_EXECUTABLE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_scalar.lua" "$<TARGET_FILE:rosetta_scalar_test>")
         add_executable(rosetta_lua_value_tests tests/test_lua_values.cpp "${generated_dir}/interop_a.cpp" "${generated_dir}/interop_b.cpp"

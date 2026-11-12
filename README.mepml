@@ -800,6 +800,28 @@ set_target_properties(library PROPERTIES PREFIX "")
 
 Enable `ROSETTA_BUILD_COMMON_LISP_EXAMPLES` for the repository modules. Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Enums, containers, overloads, callbacks, class-valued/borrowed values and inheritance remain open. The interface is written against portable CFFI, but it has only been tested with SBCL 2.6.8 on macOS (arm64); other implementations and platforms remain unverified.
 
+>>> Full Common Lisp API
+
+`--language common-lisp --lisp-api full` generates a library-shaped CLOS interface (the same planning as the Python, R6 and full Lua backends) instead of the minimal interface above, plus an ASDF system:
+
+```{sh, eval=false}
+rosetta api.hpp --language common-lisp --lisp-api full --module library \
+  --lisp-nicknames lib --policy api.policy.json -o generated/library.cpp --parts 4
+clang++ -std=c++17 -shared -fPIC generated/library*.cpp -o generated/library.so
+sbcl --eval '(asdf:load-system "library")'   # with generated/ on the ASDF source registry
+```
+
+- Classes are CLOS classes: `(make-circle 2)` or `(make-instance 'circle :radius 2)`. Methods are generic functions (`(area c)`), fields are accessors with `setf`, and overloads dispatch at run time. Names are kebab-case (`twice_area` → `twice-area`, `ns::f` → `ns--f`) in a package with optional nicknames.
+- Optional parameters use `&optional`, so only the arguments given reach C\+\+ and its defaults apply.
+- C\+\+ operators become generic functions shadowing `+ - * / mod = < <= aref funcall ...`, with the standard function as the fallback method. `print-object` uses `to_string`. `close` and `with-object` release native objects early; otherwise the garbage collector does.
+- Vectors and arrays are vectors (numeric ones `(vector double-float)`), maps are hash tables, pairs and tuples are lists, enums are keywords, `std::function` takes any function designator, and a mutable reference parameter takes `(lib:ref value)` and updates `(lib:ref-value cell)`.
+- Virtual classes can be subclassed in Lisp: `(defclass triangle (lib:shape) ())` and `(lib:define-override lib:area ((s triangle)) 6d0)` (a `defmethod` on the generic's `(self &rest args)` lambda list). C\+\+ calls the Lisp method; `call-next-method` calls the native implementation.
+- C\+\+ exceptions signal `lib:native-error` with a `native-error-kind` keyword (`:invalid-argument`, `:out-of-range`, ...). A Lisp condition signalled in a callback crosses C\+\+ and is re-signalled unchanged.
+- Docstrings carry the C\+\+ documentation, the lambda list with types and defaults, parameter and return descriptions and the possible errors, so `describe`, `documentation` and editors (mep's Lisp LSP) show them.
+- `--lisp-system PATH` sets the `.asd` path (default `PACKAGE.asd` beside the `.lisp`). The library is found beside the `.asd`/`.lisp`, or through the `MODULE_LISP_LIBRARY` environment variable. In CMake, use `rosetta_generate_common_lisp(... LISP_API full LISP_NICKNAMES lib PARTS N)`.
+
+`tests/test_lisp_full.lisp` (ctest `lisp_full_features`) exercises all of this on `examples/python_features.hpp`; datamunge's Common Lisp bindings use it.
+
 >> Tcl
 
 Select Tcl with `--language tcl`. Generation writes the C\+\+ source of a Tcl extension; it does not need Tcl. Compile it against Tcl 9.0\+ headers with `USE_TCL_STUBS` and link the stub library, so the extension loads into any Tcl 9 interpreter:
@@ -1201,6 +1223,25 @@ add_library(library STATIC "${CMAKE_CURRENT_BINARY_DIR}/library.cpp")
 ```
 
 [CobolExample.cmake|cmake/CobolExample.cmake] shows the full build, including the `cobc` link. Enable `ROSETTA_BUILD_COBOL_EXAMPLES` for the repository libraries; nixpkgs has no prebuilt GnuCOBOL for macOS, so there the shells use the `cobc` on `PATH` (for example Homebrew's). Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Enums, arrays and containers (COBOL tables), overloads, callbacks, class-valued/borrowed values, inheritance, other COBOL compilers and Windows remain open. Tested with GnuCOBOL 3.2 on macOS (arm64); other platforms remain unverified.
+
+>> Full Lua API
+
+`--language lua --lua-api full` generates a library-shaped module (the same planning as the Python and R6 backends) instead of the minimal checked interface described below:
+
+```{sh, eval=false}
+rosetta api.hpp --language lua --lua-api full --module library \
+  --policy api.policy.json -o generated/library.cpp --parts 4
+```
+
+- Classes are callable tables (`library.Circle(2)`) with methods (`c:area()`), fields, static methods, flattened inheritance and runtime overload dispatch (Lua integer vs float subtypes are distinguished). Keyword names gain a trailing underscore (`end_`).
+- C\+\+ operators become metamethods (`+`, `-`, `*`, `==`, `<`, `#`, `[]`, call, `tostring`); `<close>` and garbage collection release native objects.
+- Vectors, arrays, maps, pairs and tuples are 1-based Lua tables; enums are integer tables whose arguments also accept enumerator names; `std::function` maps to Lua functions. Mutable reference parameters take a `library.ref(value)` cell and update `cell.value`.
+- Virtual classes can be subclassed in Lua: `local Tri = library.Shape:extend{area = function(self) ... end}`. C\+\+ calls into Lua overrides; `Base.method(self)` calls the native implementation.
+- C\+\+ exceptions become Lua errors and Lua errors in callbacks become C\+\+ exceptions.
+- `--lua-meta PATH` (default `library/MODULE.lua` beside the output) writes a LuaCATS stub with the C\+\+ documentation for editors (lua-language-server, mep). Point `.luarc.json` `workspace.library` at its directory.
+- `--parts N` splits the source into the output file plus `stem_1.cpp` ... `stem_{N-1}.cpp` for parallel compilation. In CMake, use `rosetta_generate_lua(... LUA_API full LUA_META path PARTS N)`.
+
+`tests/test_lua_full.lua` exercises all of this on `examples/python_features.hpp`; datamunge's Lua bindings use it.
 
 >> Current Lua interface
 
