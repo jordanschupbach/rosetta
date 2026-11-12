@@ -68,5 +68,8 @@ struct BindingPolicy {
 bool policy_match(const std::string& pattern, const std::string& name);
 
 BindingPolicy load_policy(const std::filesystem::path& path);
+struct Module;
+// Rewrites policy keys that name an entity through a using-declaration to the entity itself.
+BindingPolicy resolve_reexports(BindingPolicy policy, const Module& module);
 
 } // namespace rosetta

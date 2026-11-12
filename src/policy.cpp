@@ -192,4 +192,45 @@ bool policy_match(const std::string& pattern, const std::string& name) {
     return p == pattern.size();
 }
 
+// Policy entries may name an entity through a using-declaration (repvgg::Spec::field for
+// namespace repvgg { using models::Spec; }); they then apply to the entity itself.
+BindingPolicy resolve_reexports(BindingPolicy policy, const Module& module) {
+    std::map<std::string, std::string> targets;
+    for (const auto& reexport : module.reexports) {
+        std::string scope;
+        for (const auto& part : reexport.namespaces) scope += part + "::";
+        targets.emplace(scope + reexport.name, reexport.target);
+    }
+    if (targets.empty()) return policy;
+    const auto resolve = [&](const std::string& key) {
+        for (auto end = key.find("::"); end != std::string::npos; end = key.find("::", end + 2)) {
+            const auto found = targets.find(key.substr(0, key.find("::", end + 2)));
+            if (found != targets.end()) return found->second + key.substr(found->first.size());
+        }
+        const auto whole = targets.find(key);
+        return whole == targets.end() ? key : whole->second;
+    };
+    // Entries for the entity itself take precedence over alias entries.
+    const auto merge = [&](auto& map) {
+        std::remove_reference_t<decltype(map)> result;
+        for (auto& [key, value] : map) if (resolve(key) == key) result.emplace(key, value);
+        for (auto& [key, value] : map) if (resolve(key) != key) result.emplace(resolve(key), value);
+        map = std::move(result);
+    };
+    merge(policy.classes); merge(policy.callbacks); merge(policy.enum_flags); merge(policy.rename);
+    merge(policy.returns); merge(policy.docs);
+    {
+        std::map<std::string, std::map<std::string, std::string>> extend;
+        for (auto& [key, value] : policy.extend) if (resolve(key) == key) extend[key] = value;
+        for (auto& [key, value] : policy.extend) if (resolve(key) != key) extend[resolve(key)].insert(value.begin(), value.end());
+        policy.extend = std::move(extend);
+    }
+    for (auto& entry : policy.exclude) entry = resolve(entry);
+    for (auto& entry : policy.readonly) entry = resolve(entry);
+    std::set<std::string> copy_types;
+    for (const auto& entry : policy.copy_types) copy_types.insert(resolve(entry));
+    policy.copy_types = std::move(copy_types);
+    return policy;
+}
+
 } // namespace rosetta

@@ -271,6 +271,12 @@ class Values(unittest.TestCase):
         self.assertEqual(f.features__legacy__version(), 2)  # qualified namespace
         self.assertEqual(f.features__legacy__Tag().id, 7)
         self.assertEqual(f.features__legacy__Mode_off, f.features__legacy__Mode.off)
+        # using-declarations re-export bound entities; policy entries may use the alias names.
+        self.assertIs(f.features__legacy__Circle, f.Circle)
+        self.assertIs(f.features__legacy__area_of, f.area_of)
+        self.assertIs(f.features__legacy__Fill, f.Fill)
+        self.assertIs(f.features__legacy__Fill_solid, f.Fill_solid)
+        self.assertEqual(f.Circle(2).diameter(), 4)
         self.assertFalse(hasattr(f, "version"))
 
     def test_set_doc(self):

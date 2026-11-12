@@ -117,7 +117,7 @@ struct ClassPlan {
 class Generator {
 public:
     Generator(const Module& module, const std::string& name, bool skip, const BindingPolicy& policy, std::size_t parts)
-        : module_(module), name_(name), skip_(skip), policy_(policy), flat_(policy.names == "flat"), parts_(parts) {}
+        : module_(module), name_(name), skip_(skip), policy_(resolve_reexports(policy, module)), flat_(policy.names == "flat"), parts_(parts) {}
 
     GeneratedPythonSource run();
 
@@ -125,7 +125,7 @@ private:
     const Module& module_;
     std::string name_;
     bool skip_;
-    const BindingPolicy& policy_;
+    const BindingPolicy policy_;
     bool flat_;
     std::size_t parts_ = 1;
     std::vector<std::string> diagnostics_;
@@ -1165,6 +1165,7 @@ GeneratedPythonSource Generator::run() {
         }
         init << "        }\n";
     }
+    std::map<std::string, std::string> enum_names; // qualified enum -> module attribute
     // Enumerations: IntEnum (IntFlag with a flag policy) plus SWIG-style constants in flat mode.
     for (const auto& enumeration : module_.enumerations) {
         const auto qualified = enumeration.qualified_name();
@@ -1193,8 +1194,10 @@ GeneratedPythonSource Generator::run() {
              << "            rosetta_py::keep(module, enum_type);\n"
              << "            Py_DECREF(enum_type);\n"
              << "            rosetta_py::enum_types()[std::type_index(typeid(" << qualified << "))] = enum_type;\n";
-        if (!(flat_ && !nested && names.at(python) != "enum " + qualified))
+        if (!(flat_ && !nested && names.at(python) != "enum " + qualified)) {
             init << "            rosetta_py::add_object(" << target << ", " << quote(python) << ", Py_NewRef(enum_type));\n";
+            if (!nested) enum_names[qualified] = python;
+        }
         if (flat_) {
             for (const auto& enumerator : enumeration.enumerators) {
                 const auto member = renamed(qualified + "::" + enumerator, keyword_safe(enumerator));
@@ -1226,6 +1229,46 @@ GeneratedPythonSource Generator::run() {
         reserve(python, "constant " + qualified);
         init << "        rosetta_py::add_object(module, " << quote(python) << ", rosetta_py::Value<std::remove_cv_t<decltype(::" << qualified
              << ")>>::cast(static_cast<std::remove_cv_t<decltype(::" << qualified << ")>>(::" << qualified << ")));\n";
+    }
+    // Using-declarations re-export bound entities under another namespace's name (ns__Name in flat mode).
+    {
+        std::map<std::string, std::string> function_names;
+        for (const auto& group : functions)
+            for (const auto& overload : group.overloads) function_names.emplace(overload.function->qualified_name(), group.name);
+        const auto alias = [&](const std::string& name, const std::string& target) {
+            if (name == target || names.count(name)) return;
+            reserve(name, "alias of " + target);
+            init << "        rosetta_py::add_object(module, " << quote(name) << ", rosetta_py::checked(PyObject_GetAttrString(module, "
+                 << quote(target) << ")));\n";
+        };
+        for (const auto& reexport : module_.reexports) {
+            std::string scope;
+            for (const auto& part : reexport.namespaces) scope += (scope.empty() ? "" : "::") + part;
+            const auto qualified = scope.empty() ? reexport.name : scope + "::" + reexport.name;
+            const auto python = renamed(qualified, keyword_safe(flat(reexport.namespaces) ? reexport.name : exported(qualified)));
+            if (reexport.kind == "record" || reexport.kind == "type") {
+                const auto c = classes_.find(reexport.target);
+                if (c != classes_.end() && c->second.parent.empty()) alias(python, c->second.python);
+            }
+            if (reexport.kind == "enum" || reexport.kind == "type") {
+                const auto e = enum_names.find(reexport.target);
+                if (e == enum_names.end()) continue;
+                alias(python, e->second);
+                // Flat mode also exports Enum_member constants for scoped enums.
+                for (const auto& enumeration : module_.enumerations) {
+                    if (enumeration.qualified_name() != reexport.target || !flat_ || !enumeration.scoped) continue;
+                    for (const auto& enumerator : enumeration.enumerators) {
+                        const auto member = keyword_safe(enumerator);
+                        const auto constant = renamed(reexport.target + "::" + enumerator, e->second + "_" + member);
+                        if (names.count(constant)) alias(python + "_" + member, constant);
+                    }
+                }
+            }
+            if (reexport.kind == "function") {
+                const auto f = function_names.find(reexport.target);
+                if (f != function_names.end()) alias(python, f->second);
+            }
+        }
     }
     if (!skip_ && !diagnostics_.empty()) {
         std::string error = "unsupported declaration for Python";
