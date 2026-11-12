@@ -354,6 +354,7 @@ class Values(unittest.TestCase):
         self.assertIn("Attributes\n----------\nx : float\n    Horizontal component.\ny : float\n    Vertical component.", vec)
         self.assertEqual(inspect.getdoc(f.Vec2.x), "Horizontal component.\n\nType: float")
         self.assertEqual(inspect.getdoc(f.Kind), "Shape kinds.")
+        self.assertIn("Within [`label`, `mark`] and (`x`).", f.defaults.__doc__)
         self.assertIn("kind : Kind, default Kind.square\nlabel : str, default \"x\"\nloud : bool, default False", f.defaults.__doc__)
 
     def test_text_signatures(self):

@@ -134,6 +134,149 @@ const std::set<std::string>& generator_reserved() {
     return names;
 }
 
+// --- Roxygen ---------------------------------------------------------------
+//
+// Doxygen comments become roxygen2 blocks (markdown) above the generated R objects, so a package
+// build that runs roxygen2 gets man/ pages that R's help() (and editors) show. Functions take
+// `...` at the R level, so each block carries an explicit @usage with the C++ parameters.
+
+// Text for roxygen markdown: outside `code` spans, backslashes, braces and square brackets are
+// escaped (Rd groups and roxygen links), as is > or # opening a line; roxygen escapes % itself.
+std::string rox_escape(const std::string& text) {
+    std::string out;
+    bool code = false;
+    bool line_start = true;
+    for (const char c : text) {
+        // A line opening with > or # would be a markdown block quote or heading.
+        if (line_start && !code && (c == '>' || c == '#')) out += '\\';
+        if (c != ' ') line_start = c == '\n';
+        if (c == '`') code = !code;
+        if (!code && (c == '\\' || c == '{' || c == '}' || c == '[' || c == ']')) out += '\\';
+        if (c == '@') out += '@'; // @@ is a literal @ for roxygen, inside code too
+        out += c;
+    }
+    return out;
+}
+
+// Prefixes every line with #'.
+std::string rox_lines(const std::string& text) {
+    std::string out;
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const auto end = text.find('\n', start);
+        auto line = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        out += line.empty() ? "#'\n" : "#' " + line + "\n";
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return out;
+}
+
+std::string at_escape(std::string text) {
+    for (std::size_t at = 0; (at = text.find('@', at)) != std::string::npos; at += 2) text.insert(at, "@");
+    return text;
+}
+
+// Prose (escaped), or a fenced code block.
+std::string rox_block(const DocBlock& block) {
+    if (block.kind == "code") {
+        std::string language = block.language;
+        if (language.empty() || language == "c++" || language == "cxx" || language == "cc") language = "cpp";
+        if (language == "py") language = "python";
+        return "```" + language + "\n" + at_escape(block.text) + "\n```";
+    }
+    if (block.kind == "math") return "```\n" + at_escape(block.text) + "\n```";
+    return rox_escape(block.text);
+}
+
+std::string indent_continuation(const std::string& text, const std::string& indent) {
+    std::string out;
+    for (const char c : text) {
+        out += c;
+        if (c == '\n') out += indent;
+    }
+    return out;
+}
+
+// Title (first sentence of the brief) and the rest of the brief.
+std::pair<std::string, std::string> split_title(const std::string& brief) {
+    std::string flat = brief;
+    for (auto& c : flat) if (c == '\n') c = ' ';
+    std::size_t at = 0;
+    while ((at = flat.find(". ", at)) != std::string::npos) {
+        // Not after a one-letter abbreviation or a common one ("e.g. ", "et al. ").
+        const auto word_start = flat.rfind(' ', at);
+        const auto word = flat.substr(word_start == std::string::npos ? 0 : word_start + 1, at - (word_start == std::string::npos ? 0 : word_start + 1));
+        if (word.size() > 1 && word != "e.g" && word != "i.e" && word != "al" && word != "vs" && word != "etc") break;
+        ++at;
+    }
+    if (at == std::string::npos || at + 2 >= flat.size()) return {flat, {}};
+    return {flat.substr(0, at + 1), flat.substr(at + 2)};
+}
+
+// Sections shared by functions and classes: description, notes, errors, see also, @par sections.
+struct RoxygenDoc {
+    std::string title, description;
+    std::vector<std::pair<std::string, std::string>> sections; // @section title, body
+    std::string note, seealso, references;
+
+    void add_section(const std::string& title_text, const std::string& body) {
+        if (body.empty()) return;
+        for (auto& section : sections)
+            if (section.first == title_text) { section.second += "\n\n" + body; return; }
+        sections.emplace_back(title_text, body);
+    }
+    void read(const Documentation& doc) {
+        auto [first, rest] = split_title(doc.brief);
+        if (title.empty()) title = rox_escape(first);
+        else if (!first.empty()) rest = first + (rest.empty() ? "" : " " + rest);
+        const auto paragraph = [&](const std::string& text) {
+            if (!text.empty()) description += (description.empty() ? "" : "\n\n") + text;
+        };
+        paragraph(rox_escape(rest));
+        std::string heading;
+        for (const auto& block : doc.details) {
+            if (block.kind == "heading") { heading = block.text; continue; }
+            if (heading.empty()) { paragraph(rox_block(block)); continue; }
+            std::string lower;
+            for (const char c : heading) lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (lower == "reference" || lower == "references")
+                references += (references.empty() ? "" : "\n\n") + rox_block(block);
+            else if (lower == "example" || lower == "examples")
+                add_section("Examples (C++)", rox_block(block));
+            else add_section(rox_escape(heading), rox_block(block));
+        }
+        for (const auto& item : doc.notes) {
+            const auto text = rox_escape(item.text);
+            if (item.name == "deprecated") add_section("Deprecated", text);
+            else if (item.name == "warning") add_section("Warning", text);
+            else if (item.name == "note" || item.name == "remark") note += (note.empty() ? "" : "\n\n") + text;
+            else {
+                std::string label = item.name == "pre" ? "Precondition" : item.name == "post" ? "Postcondition" : item.name;
+                label[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(label[0])));
+                note += (note.empty() ? "" : "\n\n") + label + ": " + text;
+            }
+        }
+        std::string errors;
+        for (const auto& item : doc.throws)
+            errors += (errors.empty() ? "" : "\n") + std::string("* ") + (item.name.empty() ? "" : "`" + item.name + "`" +
+                (item.text.empty() ? "" : ": ")) + indent_continuation(rox_escape(item.text), "  ");
+        add_section("Errors", errors.empty() ? "" : "Signals an R error (from the C++ exception):\n\n" + errors);
+        for (const auto& target : doc.see) seealso += (seealso.empty() ? "" : ", ") + rox_escape(target);
+    }
+    std::string render(const std::string& middle) const {
+        std::string out = title + "\n";
+        if (!description.empty()) out += "\n" + description + "\n";
+        out += middle;
+        for (const auto& [name, body] : sections) out += "@section " + name + ":\n" + body + "\n";
+        if (!note.empty()) out += "@note " + note + "\n";
+        if (!references.empty()) out += "@references " + references + "\n";
+        if (!seealso.empty()) out += "@seealso " + seealso + "\n";
+        out += "@md\n";
+        return rox_lines(out);
+    }
+};
+
 class Generator {
 public:
     Generator(const Module& module, const std::string& name, bool skip, const BindingPolicy& policy, bool package, std::size_t parts)
@@ -214,6 +357,11 @@ private:
     std::string function_problem(const Function& function, bool self_parameter) const;
     std::string display(const Type& type) const;
     std::string signature(const Overload& overload, const std::string& name) const;
+    std::string r_default(const DefaultValue& value, const Type& type) const;
+    std::string usage(const Overload& overload, const std::string& name) const;
+    std::string roxygen_function(const Group& group, const std::string& title) const;
+    std::string roxygen_class(const ClassPlan& plan) const;
+    std::string roxygen_enum(const Enumeration& enumeration) const;
     std::string return_policy(const Function& function) const;
     std::string class_r_name(const Record& record) const;
     bool copy_type(const Type& type) const {
@@ -442,8 +590,12 @@ std::string Generator::display(const Type& type) const {
         const auto arg = [&](std::size_t i) { return i < target.arguments.size() ? display(target.arguments[i]) : std::string("ANY"); };
         if (declaration == "std::basic_string" || declaration == "std::basic_string_view") return "character";
         if (declaration == "std::vector" || declaration == "std::deque" || declaration == "std::list" || declaration == "std::array" ||
-            declaration == "std::valarray" || declaration == "std::set" || declaration == "std::unordered_set")
-            return "vector<" + arg(0) + ">";
+            declaration == "std::valarray" || declaration == "std::set" || declaration == "std::unordered_set") {
+            // Atomic elements come back as an R vector, anything else as a list.
+            const auto element = arg(0);
+            static const std::set<std::string> atomic = {"logical", "integer", "numeric", "character", "complex"};
+            return atomic.count(element) ? element + " vector" : "list of " + element;
+        }
         if (declaration == "std::map" || declaration == "std::unordered_map") return "map<" + arg(0) + ", " + arg(1) + ">";
         if (declaration == "std::optional") return arg(0) + " or NULL";
         if (declaration == "std::complex") return "complex";
@@ -479,6 +631,193 @@ std::string Generator::signature(const Overload& overload, const std::string& na
     result += ")";
     if (!function.is_constructor) result += " -> " + display(function.result);
     return result;
+}
+
+std::string Generator::r_default(const DefaultValue& value, const Type& type) const {
+    if (value.kind == "int" || value.kind == "float") return value.value;
+    if (value.kind == "bool") return value.value == "true" ? "TRUE" : "FALSE";
+    if (value.kind == "null") return "NULL";
+    if (value.kind == "string") return value.value;
+    if (value.kind == "char") return rstring(value.value);
+    if (value.kind == "enum") {
+        const auto& target = referent(type);
+        return rstring(renamed(target.declaration + "::" + value.value, value.value));
+    }
+    if (value.kind == "constant") return value.value;
+    if (value.kind == "default") {
+        const auto& target = referent(type);
+        if (bound(target)) return classes_.at(target.declaration).r + "$new()";
+        const auto shown = display(target);
+        if (shown.size() > 7 && shown.compare(shown.size() - 7, 7, " vector") == 0) return "c()";
+        if (shown.rfind("map<", 0) == 0 || shown.rfind("list", 0) == 0) return "list()";
+        if (shown == "character") return "\"\"";
+        if (shown == "numeric" || shown == "integer") return "0";
+        if (shown == "logical") return "FALSE";
+    }
+    return "<default>";
+}
+
+std::string Generator::usage(const Overload& overload, const std::string& name) const {
+    const auto& function = *overload.function;
+    const std::size_t first = overload.receives_self ? 1 : 0;
+    const std::size_t required = function.parameters.size() - function.default_arguments;
+    std::string result = name + "(";
+    for (std::size_t i = first; i < function.parameters.size(); ++i) {
+        auto parameter = i < function.parameter_names.size() && !function.parameter_names[i].empty()
+            ? function.parameter_names[i] : "arg" + std::to_string(i - first);
+        if (!identifier(parameter) || r_safe(parameter) != parameter) parameter = bq(parameter);
+        result += (i > first ? ", " : "") + parameter;
+        if (i >= required)
+            result += " = " + r_default(i < function.default_values.size() ? function.default_values[i] : DefaultValue{}, function.parameters[i]);
+    }
+    return result + ")";
+}
+
+namespace {
+// Parameters and results of a set of overloads, merged by name.
+struct RoxygenParameters {
+    struct Entry { std::string name, type, text; };
+    std::vector<Entry> entries;
+    std::vector<std::string> returns;
+};
+}
+
+std::string Generator::roxygen_function(const Group& group, const std::string& title) const {
+    RoxygenDoc doc;
+    std::set<std::string> seen;
+    for (const auto& overload : group.overloads) {
+        const auto& documentation = overload.function->documentation;
+        if (!documentation.empty() && seen.insert(plain_documentation(documentation)).second) doc.read(documentation);
+    }
+    if (doc.title.empty()) doc.title = title;
+    std::string middle = "@usage\n";
+    std::set<std::string> usages;
+    RoxygenParameters merged;
+    for (const auto& overload : group.overloads) {
+        const auto line = usage(overload, group.name);
+        if (usages.insert(line).second) middle += line + "\n";
+        const auto& function = *overload.function;
+        const std::size_t first = overload.receives_self ? 1 : 0;
+        for (std::size_t i = first; i < function.parameters.size(); ++i) {
+            const auto cpp = i < function.parameter_names.size() ? function.parameter_names[i] : std::string();
+            const auto name = cpp.empty() ? "arg" + std::to_string(i - first) : cpp;
+            const auto type = "`" + display(function.parameters[i]) + "`";
+            std::string text;
+            for (const auto& item : function.documentation.params) if (item.name == cpp) text = rox_escape(item.text);
+            auto existing = std::find_if(merged.entries.begin(), merged.entries.end(), [&](const auto& e) { return e.name == name; });
+            if (existing == merged.entries.end()) merged.entries.push_back({name, type, text});
+            else {
+                if (existing->type.find(type) == std::string::npos) existing->type += " or " + type;
+                if (existing->text.empty()) existing->text = text;
+            }
+        }
+        if (!function.is_constructor) {
+            const auto type = display(function.result);
+            std::string text = rox_escape(function.documentation.returns);
+            for (const auto& value : function.documentation.retvals)
+                text += (text.empty() ? "" : "\n") + std::string("* `") + value.name + "`" + (value.text.empty() ? "" : ": " + rox_escape(value.text));
+            if (type != "NULL" || !text.empty()) {
+                const auto entry = "`" + type + "`" + (text.empty() ? "" : (text.front() == '*' ? ":\n\n" : ": ") + text);
+                if (std::find(merged.returns.begin(), merged.returns.end(), entry) == merged.returns.end()) merged.returns.push_back(entry);
+            }
+        }
+    }
+    for (const auto& entry : merged.entries)
+        middle += "@param " + (identifier(entry.name) ? entry.name : bq(entry.name)) + " " + entry.type +
+            (entry.text.empty() ? "" : ". " + indent_continuation(entry.text, "  ")) + "\n";
+    if (!merged.returns.empty()) {
+        middle += "@return ";
+        for (std::size_t i = 0; i < merged.returns.size(); ++i) middle += (i ? "\n\nOr " : "") + merged.returns[i];
+        middle += "\n";
+    }
+    return doc.render(middle);
+}
+
+std::string Generator::roxygen_class(const ClassPlan& plan) const {
+    RoxygenDoc doc;
+    doc.read(plan.record->documentation);
+    if (doc.title.empty()) doc.title = "C++ class `" + plan.record->qualified_name() + "`";
+    // Constructor usage and arguments.
+    std::string constructor;
+    if (!plan.constructors.empty()) {
+        std::set<std::string> usages;
+        for (const auto& overload : plan.constructors) {
+            const auto line = "`" + usage(overload, plan.r + "$new") + "`";
+            if (usages.insert(line).second) constructor += (constructor.empty() ? "" : "\n\n") + line;
+            if (!overload.function->documentation.empty()) {
+                const auto& ctor = overload.function->documentation;
+                auto summary = rox_escape(ctor.brief);
+                if (!summary.empty()) constructor += "\n\n" + summary;
+            }
+        }
+        std::string arguments;
+        std::set<std::string> listed;
+        for (const auto& overload : plan.constructors) {
+            const auto& function = *overload.function;
+            for (std::size_t i = 0; i < function.parameters.size(); ++i) {
+                const auto cpp = i < function.parameter_names.size() ? function.parameter_names[i] : std::string();
+                const auto name = cpp.empty() ? "arg" + std::to_string(i) : cpp;
+                if (!listed.insert(name).second) continue;
+                std::string text;
+                for (const auto& item : function.documentation.params) if (item.name == cpp) text = rox_escape(item.text);
+                arguments += "\n* `" + name + "` (`" + display(function.parameters[i]) + "`)" + (text.empty() ? "" : ": " + indent_continuation(text, "  "));
+            }
+            for (const auto& item : function.documentation.throws)
+                doc.add_section("Errors", "* `" + item.name + "`: " + rox_escape(item.text));
+        }
+        if (!arguments.empty()) constructor += "\n" + arguments;
+    } else {
+        constructor = plan.record->abstract ? "Abstract: create objects of a derived class (or an R6 subclass)." : "No public constructor.";
+    }
+    doc.sections.insert(doc.sections.begin(), {"Constructor", constructor});
+    std::string fields;
+    for (const auto& field : plan.fields) {
+        auto text = rox_escape(field.field->documentation.brief);
+        fields += (fields.empty() ? "" : "\n") + std::string("* `$") + field.name + "` (`" + display(field.field->type) + "`)" +
+            (text.empty() ? "" : ": " + indent_continuation(text, "  "));
+    }
+    std::string methods, statics;
+    for (const auto& group : plan.methods) {
+        std::string entry;
+        std::set<std::string> usages;
+        for (const auto& overload : group.overloads) {
+            const auto line = usage(overload, (group.is_static ? plan.r + "$" : std::string("$")) + group.name);
+            if (!usages.insert(line).second) continue;
+            const auto result = overload.function->is_constructor ? std::string() : display(overload.function->result);
+            entry += (entry.empty() ? "* " : "\n  ") + std::string("`") + line + "`" + (result.empty() || result == "NULL" ? "" : " -> `" + result + "`");
+        }
+        std::set<std::string> seen;
+        for (const auto& overload : group.overloads) {
+            const auto& documentation = overload.function->documentation;
+            if (documentation.empty() || !seen.insert(plain_documentation(documentation)).second) continue;
+            if (!documentation.brief.empty()) entry += "\n\n  " + indent_continuation(rox_escape(documentation.brief), "  ");
+            for (const auto& item : documentation.params)
+                entry += "\n  - `" + item.name + "`: " + indent_continuation(rox_escape(item.text), "    ");
+            if (!documentation.returns.empty()) entry += "\n  - Returns: " + indent_continuation(rox_escape(documentation.returns), "    ");
+        }
+        (group.is_static ? statics : methods) += (group.is_static ? statics : methods).empty() ? entry : "\n\n" + entry;
+    }
+    std::vector<std::pair<std::string, std::string>> members;
+    if (!fields.empty()) members.emplace_back("Fields", fields);
+    if (!methods.empty()) members.emplace_back("Methods", methods);
+    if (!statics.empty()) members.emplace_back("Static methods", statics);
+    doc.sections.insert(doc.sections.begin() + 1, members.begin(), members.end());
+    if (!plan.bases.empty()) {
+        std::string bases;
+        for (const auto& base : plan.bases) bases += (bases.empty() ? "" : ", ") + std::string("`") + classes_.at(base).r + "`";
+        doc.add_section("Inherits", bases);
+    }
+    return doc.render({});
+}
+
+std::string Generator::roxygen_enum(const Enumeration& enumeration) const {
+    RoxygenDoc doc;
+    doc.read(enumeration.documentation);
+    if (doc.title.empty()) doc.title = "C++ enumeration `" + enumeration.qualified_name() + "`";
+    std::string values;
+    for (const auto& enumerator : enumeration.enumerators)
+        values += (values.empty() ? "" : ", ") + std::string("`\"") + renamed(enumeration.qualified_name() + "::" + enumerator, enumerator) + "\"`";
+    return doc.render("@format A list of enumerator names, which arguments of this type accept: " + values + ".\n");
 }
 
 std::string Generator::return_policy(const Function& function) const {
@@ -1008,7 +1347,8 @@ GeneratedRSource Generator::run() {
         std::ostringstream unit;
         const auto symbol_name = emit_group(unit, group, "function");
         units.push_back({unit.str(), "SEXP " + symbol_name + "(SEXP, SEXP);\n"});
-        rcode << bq(group.name) << " <- function(...) " << call(group, bq(std::get<0>(routines_.back())) + ", NULL, list(...)") << "\n";
+        rcode << roxygen_function(group, "C++ function `" + group.overloads.front().function->qualified_name() + "`")
+              << bq(group.name) << " <- function(...) " << call(group, bq(std::get<0>(routines_.back())) + ", NULL, list(...)") << "\n";
         // Every overload takes a native object, so calls without one can go to a same-named R function.
         const bool native_only = std::all_of(group.overloads.begin(), group.overloads.end(), [&](const Overload& o) {
             const auto& ps = o.function->parameters;
@@ -1092,7 +1432,7 @@ GeneratedRSource Generator::run() {
         }
         // R class definition.
         const auto inherit = plan.bases.empty() ? std::string(".rosetta_object") : classes_.at(plan.bases.front()).r;
-        rcode << bq(plan.r) << " <- R6::R6Class(" << rstring(plan.r) << ", inherit = " << bq(inherit) << ", cloneable = FALSE,\n"
+        rcode << roxygen_class(plan) << bq(plan.r) << " <- R6::R6Class(" << rstring(plan.r) << ", inherit = " << bq(inherit) << ", cloneable = FALSE,\n"
               << "  public = list(\n    initialize = function(...) {\n"
               << "      if (...length() == 1L && inherits(..1, \"rosetta_ptr\")) self$.ptr <- ..1\n"
               << "      else " << constructor << "\n      invisible(self)\n    }";
@@ -1175,7 +1515,7 @@ GeneratedRSource Generator::run() {
             entries += "{" + quote(label) + ", " + (big ? "static_cast<long long>(" + value + "ULL)"
                 : value == "-9223372036854775808" ? std::string("(-9223372036854775807LL - 1)") : value + "LL") + "}, ";
         }
-        rcode << bq(rname) << " <- list(" << items << ")\n";
+        rcode << roxygen_enum(enumeration) << bq(rname) << " <- list(" << items << ")\n";
         if (nested) rcode << bq(classes_.at(enumeration.owner).r) << "$" << bq(member) << " <- " << bq(rname) << '\n';
         enum_tables << "    rosetta_r::EnumTable<" << qualified << ">::entries = {" << entries << "};\n";
     }
@@ -1317,7 +1657,10 @@ GeneratedRSource Generator::run() {
       << "  }\n"
       << "  if (unary) method() else method(e2)\n}\n"
       << ".rosetta_callable <- function(ptr) { force(ptr); function(...) .Call(`.rs_invoke`, ptr, list(...)) }\n"
-      << "# A mutable cell for C++ reference parameters: f(x) with x <- rosetta_ref(value) updates x$value.\n"
+      << "#' A mutable cell for C++ reference parameters\n#'\n"
+      << "#' A native function that takes a non-const C++ reference updates `x$value` when called with\n"
+      << "#' `x <- rosetta_ref(value)`; plain R values are passed by copy.\n#'\n"
+      << "#' @param value The initial value.\n#' @return An environment of class `rosetta_ref` holding `value`.\n#' @md\n"
       << "rosetta_ref <- function(value = NULL) {\n"
       << "  ref <- new.env(parent = emptyenv())\n  ref$value <- value\n  class(ref) <- \"rosetta_ref\"\n  ref\n}\n"
       << "# The R6 subclass override of a virtual method, or NULL where the generated native method applies.\n"
@@ -1348,7 +1691,7 @@ GeneratedRSource Generator::run() {
           << "      break\n    }\n  }\n}\n"
           << "base::rm(list = base::intersect(base::c(\".rosetta_name\", \".rosetta_pkg\", \".rosetta_fallback\"), base::ls(all.names = TRUE)))\n";
     }
-    for (const auto& [alias, target] : aliases) r << bq(alias) << " <- " << bq(target) << "\n";
+    for (const auto& [alias, target] : aliases) r << "#' @rdname " << target << "\n" << bq(alias) << " <- " << bq(target) << "\n";
     r << ".rosetta_onload <- function(env = parent.frame()) {\n"
       << "  values <- .Call(`.rs_init`, env)\n"
       << "  owners <- attr(values, \"owners\")\n"

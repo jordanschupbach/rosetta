@@ -122,6 +122,11 @@ inline std::string pick(const Shape&) { return "shape"; }
 /// @endcode
 inline int add(int a, int b = 10, int c = 100) { return a + b + c; }
 /// Default values of every literal kind.
+///
+/// Escapes {braces}, [brackets], an @ sign and
+/// > 0 at a line start.
+///
+/// Within [@p label, @p mark] and (@c x).
 inline std::string defaults(Kind kind = Kind::square, const std::string& label = "x", bool loud = false, double weight = 0.5,
                             char mark = '*', int lambda = -2) {
     return label + mark + std::to_string(static_cast<int>(kind)) + (loud ? "!" : "") + std::to_string(weight + lambda);

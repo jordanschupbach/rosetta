@@ -86,10 +86,16 @@ std::string tidy_lines(const std::vector<std::string>& raw) {
     return result;
 }
 
-// Splits "Bar." into ("Bar", ".") so references keep sentence punctuation outside markup.
+// Splits "Bar." into ("Bar", ".") and "hi]" into ("hi", "]") so markup ends before punctuation.
 std::pair<std::string, std::string> split_punctuation(std::string word) {
     std::string tail;
-    while (!word.empty() && std::string(".,;:!?").find(word.back()) != std::string::npos) {
+    const auto unmatched_closer = [&] {
+        const char close = word.back();
+        const char open = close == ')' ? '(' : close == ']' ? '[' : close == '}' ? '{' : '\0';
+        if (!open) return false;
+        return std::count(word.begin(), word.end(), close) > std::count(word.begin(), word.end(), open);
+    };
+    while (!word.empty() && (std::string(".,;:!?\"'").find(word.back()) != std::string::npos || unmatched_closer())) {
         tail.insert(tail.begin(), word.back());
         word.pop_back();
     }
@@ -130,7 +136,7 @@ public:
                 if (render == "monospaced") word = "`" + word + "`";
                 else if (render == "bold") word = "**" + word + "**";
                 else if (render == "emphasized") word = "*" + word + "*";
-                if (!text.empty() && text.back() != ' ' && text.back() != '(') text += ' ';
+                if (!text.empty() && std::string(" ([{\"'/").find(text.back()) == std::string::npos) text += ' ';
                 text += word + tail;
             } else if (kind == "HTMLStartTagComment" || kind == "HTMLEndTagComment") {
                 const auto tag = child.value("name", "");

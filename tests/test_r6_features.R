@@ -196,4 +196,16 @@ check(api$run_visitor(summer, c(1, 2)) == 30, identical(summer$seen, c(1, 2)),
       api$run_visitor(api$Visitor$new(), c(1, 2)) == 3)
 gctorture(TRUE)
 tryCatch(check(api$area_of(Triangle$new(2, 2)) == 2), finally = gctorture(FALSE))
+# Doxygen comments become roxygen blocks (help pages once a package build runs roxygen2).
+generated <- readLines(args[[2]])
+has <- function(line) any(generated == line)
+check(has("#' Adds three integers, Socha & Dorigo style."), has("#' add(a, b = 10, c = 100)"),
+      has("#' @param a `integer`. first term"), has("#' @return `integer`: the sum"),
+      has("#' * `std::out_of_range`: never, in practice"), has("#' @section Examples (C++):"),
+      has("#' defaults(kind = \"square\", label = \"x\", loud = FALSE, weight = 0.5, mark = \"*\", lambda = -2)"),
+      has("#' Escapes \\{braces\\}, \\[brackets\\], an @@ sign and"), has("#' \\> 0 at a line start."), has("#' Within \\[`label`, `mark`\\] and (`x`)."),
+      has("#' `Circle$new(radius)`"), has("#' * `radius` (`numeric`): distance from the centre; must not be negative"),
+      has("#' * `$x` (`numeric`): Horizontal component."), has("#' @rdname Circle"),
+      has("#' @param values `numeric vector`"), has("#' @param shapes `list of Shape`"),
+      has("#' @format A list of enumerator names, which arguments of this type accept: `\"circle\"`, `\"square\"`, `\"custom\"`."))
 cat("R6 features passed\n")
