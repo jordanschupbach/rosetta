@@ -12,6 +12,25 @@ sys.modules["python_features"] = f
 spec.loader.exec_module(f)
 
 
+class Submodules(unittest.TestCase):
+    def test_policy_module_holds_namespace_functions(self):
+        data = f.data
+        self.assertEqual(type(data).__name__, "module")
+        self.assertEqual(data.__name__, "python_features.data")
+        self.assertIs(sys.modules["python_features.data"], data)
+        unit = data.unit()
+        self.assertIsInstance(unit, f.Vec2)
+        self.assertEqual((unit.x, unit.y), (1, 0))
+        self.assertEqual(data.scaled(3), 6)
+        self.assertEqual(data.scaled(2.0), 5.0)
+        self.assertEqual(data.repeat("ab"), "abab")          # features::data::repeat
+        self.assertEqual(f.repeat("x", 3), "xxx")           # features::repeat is untouched
+        self.assertFalse(hasattr(f, "unit"))                # nothing leaks to the top level
+        self.assertFalse(hasattr(f, "scaled"))
+        self.assertEqual(data.unit.__name__, "unit")
+        self.assertIn("unit", dir(data))
+
+
 class Hierarchies(unittest.TestCase):
     def test_inheritance_and_downcasts(self):
         circle = f.Circle(2)

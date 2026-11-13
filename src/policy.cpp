@@ -2,6 +2,8 @@
 #include "rosetta/model.hpp"
 #include "process.hpp"
 #include <nlohmann/json.hpp>
+#include <algorithm>
+#include <cctype>
 #include <charconv>
 
 namespace rosetta {
@@ -29,7 +31,7 @@ BindingPolicy load_policy(const std::filesystem::path& path) {
     try {
         const auto root = Json::parse(detail::read_file(path));
         keys(root, {"version", "classes", "callbacks", "enums", "select", "exclude", "rename", "templates", "extend",
-                    "returns", "readonly", "docs", "convert", "names", "sequences", "directors", "scope", "exceptions", "qualify", "copy_types"}, "policy");
+                    "returns", "readonly", "docs", "convert", "names", "sequences", "directors", "scope", "exceptions", "qualify", "modules", "copy_types"}, "policy");
         if (!root.contains("version") || !root["version"].is_number_integer() || root["version"] != 1)
             throw BindingError("policy version must be 1");
         BindingPolicy policy;
@@ -67,6 +69,18 @@ BindingPolicy load_policy(const std::filesystem::path& path) {
         }
         if (root.contains("exclude")) policy.exclude = list(root["exclude"], "policy exclude");
         if (root.contains("qualify")) policy.qualify = list(root["qualify"], "policy qualify");
+        if (root.contains("modules")) {
+            policy.modules = string_map(root["modules"], "policy modules");
+            std::set<std::string> targets;
+            for (const auto& [scope, name] : policy.modules) {
+                const auto identifier = !name.empty() && (std::isalpha(static_cast<unsigned char>(name[0])) || name[0] == '_')
+                    && std::all_of(name.begin(), name.end(), [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; });
+                if (scope.empty() || scope.find('*') != std::string::npos || scope.rfind("::", 0) == 0)
+                    throw BindingError("policy modules keys are exact namespaces such as lib::data");
+                if (!identifier) throw BindingError("policy modules name for " + scope + " must be an identifier: " + name);
+                if (!targets.insert(name).second) throw BindingError("policy modules maps two namespaces to " + name);
+            }
+        }
         if (root.contains("copy_types"))
             for (const auto& type : list(root["copy_types"], "policy copy_types")) policy.copy_types.insert(type);
         if (root.contains("scope"))
@@ -179,6 +193,38 @@ BindingPolicy load_policy(const std::filesystem::path& path) {
         throw BindingError("invalid binding policy: " + std::string(error.what()));
     }
 }
+std::string policy_module(const BindingPolicy& policy, const std::vector<std::string>& namespaces) {
+    if (policy.modules.empty()) return {};
+    std::string scope;
+    for (const auto& part : namespaces) scope += (scope.empty() ? "" : "::") + part;
+    const auto found = policy.modules.find(scope);
+    return found == policy.modules.end() ? std::string{} : found->second;
+}
+
+void validate_modules(const BindingPolicy& policy, const Module& module) {
+    if (policy.modules.empty()) return;
+    const auto excluded = [&](const std::string& name) {
+        for (const auto& pattern : policy.exclude) if (policy_match(pattern, name)) return true;
+        return false;
+    };
+    const auto check = [&](const std::vector<std::string>& namespaces, const std::string& name, const char* kind) {
+        const auto target = policy_module(policy, namespaces);
+        if (target.empty() || excluded(name)) return;
+        throw BindingError(std::string("policy modules: ") + kind + " " + name + " is in mapped namespace (module " + target
+                           + "); modules hold free functions only, so exclude it or move it");
+    };
+    for (const auto& record : module.records)
+        if (record.owner.empty()) check(record.namespaces, record.qualified_name(), "class");
+    for (const auto& enumeration : module.enumerations)
+        if (enumeration.owner.empty()) check(enumeration.namespaces, enumeration.qualified_name(), "enumeration");
+    for (const auto& variable : module.variables) check(variable.namespaces, variable.qualified_name(), "variable");
+    for (const auto& reexport : module.reexports) {
+        std::string scope;
+        for (const auto& part : reexport.namespaces) scope += (scope.empty() ? "" : "::") + part;
+        check(reexport.namespaces, scope.empty() ? reexport.name : scope + "::" + reexport.name, "re-export");
+    }
+}
+
 bool policy_match(const std::string& pattern, const std::string& name) {
     // Iterative glob matching with backtracking to the last '*'.
     std::size_t p = 0, n = 0, star = std::string::npos, mark = 0;

@@ -179,6 +179,7 @@ struct Group {
     std::string name;        // Python name
     std::vector<Overload> overloads;
     bool is_static = false;
+    std::string module;      // policy submodule of a module function ("" = top level)
 };
 struct ClassPlan {
     const Record* record;
@@ -196,7 +197,7 @@ struct ClassPlan {
 class Generator {
 public:
     Generator(const Module& module, const std::string& name, bool skip, const BindingPolicy& policy, std::size_t parts)
-        : module_(module), name_(name), skip_(skip), policy_(resolve_reexports(policy, module)), flat_(policy.names == "flat"), parts_(parts) {}
+        : module_(module), name_(name), skip_(skip), policy_(resolve_reexports(policy, module)), flat_(policy.names == "flat"), parts_(parts) { validate_modules(policy_, module_); }
 
     GeneratedPythonSource run();
 
@@ -1228,7 +1229,7 @@ GeneratedPythonSource Generator::run() {
             const auto found = group_index.find(python);
             if (found == group_index.end()) {
                 group_index[python] = plan.methods.size();
-                plan.methods.push_back({python, {overload}, is_static});
+                plan.methods.push_back({python, {overload}, is_static, {}});
             } else {
                 auto& group = plan.methods[found->second];
                 if (group.is_static != is_static) {
@@ -1286,12 +1287,15 @@ GeneratedPythonSource Generator::run() {
         if (!why.empty()) { reject(function.qualified_name(), why); continue; }
         const auto specialization = function_template_names_.find(function.qualified_name());
         if (!function.template_name.empty() && specialization == function_template_names_.end()) continue;
+        const auto submodule = policy_module(policy_, function.namespaces);
         const auto python = specialization != function_template_names_.end() ? specialization->second
-            : renamed(function.qualified_name(), keyword_safe(flat(function.namespaces) ? function.name : exported(function.qualified_name())));
-        const auto found = function_index.find(python);
+            : renamed(function.qualified_name(), keyword_safe(!submodule.empty() || flat(function.namespaces) ? function.name
+                                                                                 : exported(function.qualified_name())));
+        const auto key = submodule + "." + python;
+        const auto found = function_index.find(key);
         if (found == function_index.end()) {
-            function_index[python] = functions.size();
-            functions.push_back({python, {{&function, {}}}, false});
+            function_index[key] = functions.size();
+            functions.push_back({python, {{&function, {}}}, false, submodule});
         } else functions[found->second].overloads.push_back({&function, {}});
     }
 
@@ -1301,7 +1305,13 @@ GeneratedPythonSource Generator::run() {
         const auto inserted = names.emplace(python, what);
         if (!inserted.second) throw BindingError("Python export name collision: " + python + " (" + inserted.first->second + " and " + what + ")");
     };
-    for (const auto& group : functions) reserve(group.name, "function " + group.overloads.front().function->qualified_name());
+    // Submodules are module-level names too; their functions are unique within each submodule.
+    std::map<std::string, std::set<std::string>> submodule_names;
+    for (const auto& group : functions) {
+        if (group.module.empty()) { reserve(group.name, "function " + group.overloads.front().function->qualified_name()); continue; }
+        if (!submodule_names.count(group.module)) reserve(group.module, "submodule " + group.module);
+        submodule_names[group.module].insert(group.name);
+    }
     for (const auto& owner : class_order_) if (classes_.at(owner).parent.empty()) reserve(classes_.at(owner).python, "class " + owner);
 
     if (!skip_ && !diagnostics_.empty()) {
@@ -1344,12 +1354,14 @@ GeneratedPythonSource Generator::run() {
     out << "}\n";
 
     std::ostringstream module_methods;
+    std::map<std::string, std::ostringstream> submodule_methods;
     for (const auto& group : functions) {
         std::ostringstream unit;
         const auto symbol_name = emit_group(unit, group, "function");
         units.push_back({unit.str(), "PyObject* " + symbol_name + "(PyObject*, PyObject*, PyObject*);\n"});
-        module_methods << "    {" << quote(group.name) << ", reinterpret_cast<PyCFunction>(reinterpret_cast<void(*)()>(" << symbol_name
-                       << ")), METH_VARARGS | METH_KEYWORDS, " << quote(documentation(group.overloads, group.name)) << "},\n";
+        (group.module.empty() ? module_methods : submodule_methods[group.module])
+            << "    {" << quote(group.name) << ", reinterpret_cast<PyCFunction>(reinterpret_cast<void(*)()>(" << symbol_name
+            << ")), METH_VARARGS | METH_KEYWORDS, " << quote(documentation(group.overloads, group.name)) << "},\n";
     }
 
     init << "        rosetta_py::sequence_results_as_tuple = " << (policy_.sequences == "tuple" ? "true" : "false") << ";\n"
@@ -1358,6 +1370,21 @@ GeneratedPythonSource Generator::run() {
     init
          << "        rosetta_py::initialize_runtime(&rosetta_root_spec, &rosetta_callable_spec);\n"
          << "        rosetta_py::add_object(module, \"_NativeObject\", Py_NewRef(reinterpret_cast<PyObject*>(rosetta_py::root_type())));\n";
+    // Policy submodules: plain modules holding their functions, also registered in sys.modules
+    // so `from package.module.data import f` works.
+    {
+        std::size_t index = 0;
+        for (const auto& [submodule, methods] : submodule_methods) {
+            (void)methods;
+            init << "        {\n"
+                 << "            PyObject* submodule = rosetta_py::checked(PyModule_New(" << quote(name_ + "." + submodule) << "));\n"
+                 << "            if (PyModule_AddFunctions(submodule, rosetta_submodule_functions_" << index << ") < 0) { Py_DECREF(submodule); throw rosetta_py::python_error{}; }\n"
+                 << "            if (PyDict_SetItemString(PyImport_GetModuleDict(), " << quote(name_ + "." + submodule) << ", submodule) < 0) { Py_DECREF(submodule); throw rosetta_py::python_error{}; }\n"
+                 << "            rosetta_py::add_object(module, " << quote(submodule) << ", submodule);\n"
+                 << "        }\n";
+            ++index;
+        }
+    }
     for (const auto& owner : class_order_) {
         auto& plan = classes_.at(owner);
         const auto& record = *plan.record;
@@ -1586,7 +1613,13 @@ GeneratedPythonSource Generator::run() {
         << ", static_cast<int>(sizeof(rosetta_py::Instance)), 0, Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE | Py_TPFLAGS_HAVE_GC, rosetta_py::root_slots};\n"
         << "static PyType_Spec rosetta_callable_spec = {" << quote(name_ + "._NativeCallable")
         << ", static_cast<int>(sizeof(rosetta_py::Callable)), 0, Py_TPFLAGS_DEFAULT, rosetta_py::callable_slots};\n"
-        << "static PyMethodDef rosetta_functions[] = {\n" << module_methods.str()
+        ;
+    {
+        std::size_t index = 0;
+        for (const auto& [submodule, methods] : submodule_methods)
+            out << "static PyMethodDef rosetta_submodule_functions_" << index++ << "[] = {\n" << methods.str() << "    {nullptr, nullptr, 0, nullptr}};\n";
+    }
+    out << "static PyMethodDef rosetta_functions[] = {\n" << module_methods.str()
         << "    {\"_set_doc\", rosetta_py::set_doc, METH_VARARGS, \"_set_doc(obj, text)\\n--\\n\\nSet obj.__doc__, including for this module's (read-only) functions and methods.\"},\n"
         << "    {nullptr, nullptr, 0, nullptr}};\n"
         << "static int rosetta_exec(PyObject* module) {\n    return rosetta_py::guard<int>([&]() -> int {\n" << init.str()

@@ -10,6 +10,9 @@
   "qualify": [
     "features::legacy"
   ],
+  "modules": {
+    "features::data": "data"
+  },
   "copy_types": [
     "features::Stamp"
   ],

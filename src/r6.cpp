@@ -103,6 +103,7 @@ struct Group {
     std::string name;
     std::vector<Overload> overloads;
     bool is_static = false;
+    std::string module;        // policy submodule of a module function ("" = top level)
 };
 struct FieldPlan { const Field* field; std::string name; };
 struct ClassPlan {
@@ -280,7 +281,7 @@ struct RoxygenDoc {
 class Generator {
 public:
     Generator(const Module& module, const std::string& name, bool skip, const BindingPolicy& policy, bool package, std::size_t parts)
-        : module_(module), name_(name), skip_(skip), policy_(resolve_reexports(policy, module)), flat_(policy.names == "flat"), package_(package), parts_(parts) {}
+        : module_(module), name_(name), skip_(skip), policy_(resolve_reexports(policy, module)), flat_(policy.names == "flat"), package_(package), parts_(parts) { validate_modules(policy_, module_); }
     GeneratedRSource run();
 
 private:
@@ -1234,7 +1235,7 @@ GeneratedRSource Generator::run() {
             const auto found = group_index.find(rname);
             if (found == group_index.end()) {
                 group_index[rname] = plan.methods.size();
-                plan.methods.push_back({rname, {overload}, is_static});
+                plan.methods.push_back({rname, {overload}, is_static, {}});
             } else {
                 auto& group = plan.methods[found->second];
                 if (group.is_static != is_static) {
@@ -1290,12 +1291,15 @@ GeneratedRSource Generator::run() {
         if (!why.empty()) { reject(function.qualified_name(), why); continue; }
         const auto specialization = function_template_names_.find(function.qualified_name());
         if (!function.template_name.empty() && specialization == function_template_names_.end()) continue;
+        const auto submodule = policy_module(policy_, function.namespaces);
         const auto rname = specialization != function_template_names_.end() ? specialization->second
-            : renamed(function.qualified_name(), r_safe(flat(function.namespaces) ? function.name : exported(function.qualified_name())));
-        const auto found = function_index.find(rname);
+            : renamed(function.qualified_name(), r_safe(!submodule.empty() || flat(function.namespaces) ? function.name
+                                                                                  : exported(function.qualified_name())));
+        const auto key = submodule + "." + rname;
+        const auto found = function_index.find(key);
         if (found == function_index.end()) {
-            function_index[rname] = functions.size();
-            functions.push_back({rname, {{&function, {}}}, false});
+            function_index[key] = functions.size();
+            functions.push_back({rname, {{&function, {}}}, false, submodule});
         } else functions[found->second].overloads.push_back({&function, {}});
     }
 
@@ -1308,7 +1312,12 @@ GeneratedRSource Generator::run() {
     for (const auto* internal : {".rosetta_object", ".rosetta_ops", ".rosetta_callable", ".rosetta_override", ".rosetta_onload", ".rosetta_exports", "rosetta_ref",
                                   ".rosetta_guarded", ".rosetta_has_native", ".rosetta_guard"})
         reserve(internal, "Rosetta runtime");
-    for (const auto& group : functions) reserve(group.name, "function " + group.overloads.front().function->qualified_name());
+    // A submodule is one top-level list of its functions, whose names are unique within it.
+    std::set<std::string> submodules;
+    for (const auto& group : functions) {
+        if (group.module.empty()) reserve(group.name, "function " + group.overloads.front().function->qualified_name());
+        else if (submodules.insert(group.module).second) reserve(group.module, "submodule " + group.module);
+    }
     for (const auto& owner : class_order_) reserve(classes_.at(owner).r, "class " + owner);
 
     std::map<std::string, std::string> enum_rnames; // qualified enum -> R name
@@ -1344,10 +1353,15 @@ GeneratedRSource Generator::run() {
 
     // R code: module functions.
     std::vector<std::string> guardable;
+    std::map<std::string, std::vector<std::pair<const Group*, std::string>>> submodule_code; // submodule -> (group, R function)
     for (const auto& group : functions) {
         std::ostringstream unit;
         const auto symbol_name = emit_group(unit, group, "function");
         units.push_back({unit.str(), "SEXP " + symbol_name + "(SEXP, SEXP);\n"});
+        if (!group.module.empty()) {
+            submodule_code[group.module].emplace_back(&group, "function(...) " + call(group, bq(std::get<0>(routines_.back())) + ", NULL, list(...)"));
+            continue;
+        }
         rcode << roxygen_function(group, "C++ function `" + group.overloads.front().function->qualified_name() + "`")
               << bq(group.name) << " <- function(...) " << call(group, bq(std::get<0>(routines_.back())) + ", NULL, list(...)") << "\n";
         // Every overload takes a native object, so calls without one can go to a same-named R function.
@@ -1356,6 +1370,30 @@ GeneratedRSource Generator::run() {
             return std::any_of(ps.begin(), ps.end(), [&](const Type& t) { return carries_bound(t); });
         });
         if (native_only) guardable.push_back(group.name);
+    }
+
+    // Policy submodules: a list of functions, called as submodule$name(...).
+    for (const auto& [submodule, entries] : submodule_code) {
+        std::string scope;
+        for (const auto& part : entries.front().first->overloads.front().function->namespaces) scope += (scope.empty() ? "" : "::") + part;
+        rcode << "#' Functions of the C++ namespace `" << scope << "`\n#'\n"
+              << "#' A list of the functions bound from C++ namespace `" << scope << "`; call them as `" << submodule << "$name(...)`.\n#'\n"
+              << "#' @format A list of functions:\n#' \\describe{\n";
+        for (const auto& [group, code] : entries) {
+            (void)code;
+            RoxygenDoc doc;
+            doc.read(group->overloads.front().function->documentation);
+            const auto title = doc.title.empty() ? "C++ function `" + group->overloads.front().function->qualified_name() + "`" : doc.title;
+            std::set<std::string> usages;
+            for (const auto& overload : group->overloads) {
+                const auto line = usage(overload, submodule + "$" + group->name);
+                if (usages.insert(line).second) rcode << "#'   \\item{`" << line << "`}{" << title << "}\n";
+            }
+        }
+        rcode << "#' }\n#' @md\n" << bq(submodule) << " <- list(\n";
+        for (std::size_t i = 0; i < entries.size(); ++i)
+            rcode << "  " << bq(entries[i].first->name) << " = " << entries[i].second << (i + 1 < entries.size() ? ",\n" : "\n");
+        rcode << ")\n";
     }
 
     // Classes. R code of each class's own members, by name, for copying into classes that
@@ -1547,7 +1585,8 @@ GeneratedRSource Generator::run() {
     {
         std::map<std::string, std::string> function_rnames;
         for (const auto& group : functions)
-            for (const auto& overload : group.overloads) function_rnames.emplace(overload.function->qualified_name(), group.name);
+            if (group.module.empty())
+                for (const auto& overload : group.overloads) function_rnames.emplace(overload.function->qualified_name(), group.name);
         for (const auto& reexport : module_.reexports) {
             std::string target;
             if (reexport.kind == "record" || reexport.kind == "type") { const auto c = classes_.find(reexport.target); if (c != classes_.end()) target = c->second.r; }

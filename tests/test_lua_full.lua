@@ -211,6 +211,14 @@ check(api.run_visitor(api.Visitor(), {1, 2}) == 3)
 local co = coroutine.wrap(function() return api.apply(function(x) return x + 1 end, 1) end)
 check(co() == 2)
 
+-- Policy modules: features::data functions live in a nested table, not in the module.
+check(type(api.data) == "table", "data submodule")
+local unit_vec = api.data.unit()
+check(getmetatable(unit_vec).__name == "Vec2" and unit_vec.x == 1 and unit_vec.y == 0, "submodule result")
+check(api.data.scaled(3) == 6 and api.data.scaled(2.5) == 6.25, "submodule overloads")
+check(api.data.repeat_("ab") == "abab" and api.repeat_("x", 3) == "xxx", "submodule names are separate")
+check(api.unit == nil and api.scaled == nil, "nothing leaks to the module")
+
 -- The LuaCATS stub documents the module for editors.
 local file = assert(io.open(meta_path))
 local stub = file:read("a")
@@ -235,6 +243,8 @@ check(has("---@param values number[]"), "sequence type")
 check(has("---@param shapes features.Shape[]"), "class sequence type")
 check(has("---@param kind? features.Kind (default: `features.Kind.square`)"), "enum default")
 check(has("---@param f fun(a1: number): number"), "callback type")
+check(has("features.data = {}"), "submodule table")
+check(has("function features.data.unit() end"), "submodule function")
 check(has("return features"), "return")
 -- The stub is valid Lua.
 assert(load(stub, "=stub"))

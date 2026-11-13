@@ -111,6 +111,7 @@ struct Group {
     std::vector<Overload> overloads;
     bool is_static = false;
     std::string symbol;        // generated callback
+    std::string module;        // policy submodule of a module function ("" = exports)
 };
 struct FieldPlan { const Field* field; std::string name; std::string getter, setter; bool writable = true; };
 struct ConstantPlan { std::string name, expression; const Type* type; const Documentation* documentation; };
@@ -207,7 +208,7 @@ std::string jsdoc(const std::string& text, const std::string& indent) {
 class Generator {
 public:
     Generator(const Module& module, const std::string& name, bool skip, const BindingPolicy& policy, std::size_t parts)
-        : module_(module), name_(name), skip_(skip), policy_(resolve_reexports(policy, module)), flat_(policy.names == "flat"), parts_(parts) {}
+        : module_(module), name_(name), skip_(skip), policy_(resolve_reexports(policy, module)), flat_(policy.names == "flat"), parts_(parts) { validate_modules(policy_, module_); }
     GeneratedJavaScriptSource run();
 
 private:
@@ -1228,7 +1229,7 @@ GeneratedJavaScriptSource Generator::run() {
             const auto found = group_index.find(jname);
             if (found == group_index.end()) {
                 group_index[jname] = plan.methods.size();
-                plan.methods.push_back({jname, {overload}, is_static, {}});
+                plan.methods.push_back({jname, {overload}, is_static, {}, {}});
             } else {
                 auto& group = plan.methods[found->second];
                 if (group.is_static != is_static) {
@@ -1313,15 +1314,24 @@ GeneratedJavaScriptSource Generator::run() {
         if (!why.empty()) { reject(function.qualified_name(), why); continue; }
         const auto specialization = function_template_names_.find(function.qualified_name());
         if (!function.template_name.empty() && specialization == function_template_names_.end()) continue;
+        const auto submodule = policy_module(policy_, function.namespaces);
         const auto jname = specialization != function_template_names_.end() ? specialization->second
-            : renamed(function.qualified_name(), flat(function.namespaces) ? function.name : exported(function.qualified_name()));
-        const auto found = function_index.find(jname);
+            : renamed(function.qualified_name(), !submodule.empty() || flat(function.namespaces) ? function.name : exported(function.qualified_name()));
+        // A submodule is a namespace in the declarations, where reserved words cannot be re-exported.
+        if (!submodule.empty() && reserved(jname)) { reject(function.qualified_name(), "reserved word as a submodule function name"); continue; }
+        const auto key = submodule + "." + jname;
+        const auto found = function_index.find(key);
         if (found == function_index.end()) {
-            function_index[jname] = functions.size();
-            functions.push_back({jname, {{&function, {}}}, false, {}});
+            function_index[key] = functions.size();
+            functions.push_back({jname, {{&function, {}}}, false, {}, submodule});
         } else functions[found->second].overloads.push_back({&function, {}});
     }
-    for (const auto& group : functions) reserve(group.name, "function " + group.overloads.front().function->qualified_name());
+    // Submodules are export names too; their functions are unique within each submodule.
+    std::set<std::string> submodules;
+    for (const auto& group : functions) {
+        if (group.module.empty()) reserve(group.name, "function " + group.overloads.front().function->qualified_name());
+        else if (submodules.insert(group.module).second) reserve(group.module, "submodule " + group.module);
+    }
 
     // Constant namespace-scope variables.
     std::vector<ConstantPlan> constants;
@@ -1349,7 +1359,8 @@ GeneratedJavaScriptSource Generator::run() {
     {
         std::map<std::string, std::string> function_names;
         for (const auto& group : functions)
-            for (const auto& overload : group.overloads) function_names.emplace(overload.function->qualified_name(), group.name);
+            if (group.module.empty())
+                for (const auto& overload : group.overloads) function_names.emplace(overload.function->qualified_name(), group.name);
         for (const auto& reexport : module_.reexports) {
             std::string target;
             if (reexport.kind == "record" || reexport.kind == "type") { const auto c = classes_.find(reexport.target); if (c != classes_.end()) target = c->second.js; }
@@ -1529,11 +1540,19 @@ GeneratedJavaScriptSource Generator::run() {
               << "rosetta_js::set_prototype_of(env, rosetta_js::deref(env, s.constructors[rosetta_js::Info<" << owner << ">::value.id]), "
               << "rosetta_js::deref(env, s.constructors[rosetta_js::Info<" << plan.bases.front() << ">::value.id]));\n";
     }
-    if (!functions.empty()) {
-        setup << "{\n    const napi_property_descriptor functions[] = {\n";
-        for (const auto& group : functions)
-            setup << "        rosetta_js::method(" << quote(group.name) << ", " << group.symbol << ", napi_default_jsproperty),\n";
-        setup << "    };\n    rosetta_js::check(env, napi_define_properties(env, exports, sizeof(functions) / sizeof(functions[0]), functions));\n}\n";
+    // Top-level functions go on exports; each policy submodule is a plain object of its functions.
+    std::map<std::string, std::vector<const Group*>> by_module;
+    for (const auto& group : functions) by_module[group.module].push_back(&group);
+    for (const auto& [submodule, groups] : by_module) {
+        setup << "{\n";
+        if (submodule.empty()) setup << "    napi_value target = exports;\n";
+        else setup << "    napi_value target;\n    rosetta_js::check(env, napi_create_object(env, &target));\n";
+        setup << "    const napi_property_descriptor functions[] = {\n";
+        for (const auto* group : groups)
+            setup << "        rosetta_js::method(" << quote(group->name) << ", " << group->symbol << ", napi_default_jsproperty),\n";
+        setup << "    };\n    rosetta_js::check(env, napi_define_properties(env, target, sizeof(functions) / sizeof(functions[0]), functions));\n";
+        if (!submodule.empty()) setup << "    rosetta_js::set(env, exports, " << quote(submodule) << ", target);\n";
+        setup << "}\n";
     }
     for (const auto& [qualified, jname] : enum_names_) {
         const auto& enumeration = *enums_.at(qualified);
@@ -1624,11 +1643,23 @@ GeneratedJavaScriptSource Generator::run() {
         types << "\n";
     }
     for (const auto& owner : class_order_) types << ts_class(classes_.at(owner));
+    std::map<std::string, std::string> submodule_types;
     for (const auto& group : functions) {
+        if (!group.module.empty()) {
+            // Inside `export declare namespace`, declarations are plain exported functions.
+            auto declaration = ts_function(group, "    ", false);
+            for (std::size_t at; (at = declaration.find("export declare function ")) != std::string::npos;)
+                declaration.replace(at, 24, "export function ");
+            submodule_types[group.module] += declaration;
+            continue;
+        }
         types << ts_function(group, "", false);
         if (reserved(group.name)) types << "export { " << declared(group.name) << " as " << group.name << " };\n";
     }
     if (!functions.empty()) types << "\n";
+    for (const auto& [submodule, declarations] : submodule_types)
+        types << "/** Functions of the C++ namespace mapped to `" << submodule << "` by the binding policy. */\n"
+              << "export declare namespace " << submodule << " {\n" << declarations << "}\n\n";
     for (const auto& constant : constants) {
         types << jsdoc(doc_description(*constant.documentation), "")
               << (reserved(constant.name) ? "declare const " + declared(constant.name) : "export declare const " + constant.name)

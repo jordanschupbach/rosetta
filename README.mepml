@@ -144,6 +144,16 @@ build/rosetta include/library.hpp --module library \
 
 Rosetta uses the configured `--clang`, preserves common GCC/Clang parsing options, and removes source, compile/output and dependency-output arguments. It never executes the database's compiler or builds generated dependencies. `arguments` takes precedence over `command`; command strings support literal POSIX quoting without shell expansion or execution. Response files, compiler launchers and forwarded driver options are currently rejected; supply expanded arguments or manual `--` flags instead. Imported flags must be compatible with the selected Clang. The IR records the compiler path, working directory, semantic flags and selected database record for inspection.
 
+>> Namespaces as submodules
+
+By default a C\+\+ namespace is flattened into the exported name (`names: "qualified"` gives `lib__data__iris`, `names: "flat"` gives `iris`). The policy key `modules` maps an exact namespace to a nested submodule instead, in the targets that have one:
+
+```{json, eval=false}
+{ "version": 1, "names": "flat", "modules": { "lib::data": "data" } }
+```
+
+Free functions declared directly in `lib::data` are then exported under their own names into `data`: `lib.data.iris()` in Python (also importable as `lib.data`), `lib.data.iris()` in JavaScript (`export declare namespace data` in the TypeScript declarations), `lib.data.iris()` in the full Lua API (with LuaCATS annotations), `data$iris()` in R6 (a documented list of functions), and `(lib.data:iris)` in Common Lisp (a package `LIB.DATA`, plus `NICK.DATA` for each `--lisp-nicknames` entry). COBOL has no nested modules and prefixes the name instead: `CALL "dm_data_iris"`. Function names in a submodule only need to be unique within it, and the submodule name is reserved at the top level. A mapped namespace may hold only free functions: classes, enumerations, constants and using-declarations in it fail generation unless the policy excludes them. Keys must be exact namespaces (no `*`), names must be identifiers, and two namespaces cannot share a submodule. Other backends do not yet read `modules`.
+
 >> R and R6
 
 For an interactive R session, run `just r-repl` directly from the repository, including outside a Nix shell. This enters the flake's `r-repl` shell, builds the R6 examples in a separate `build/r-repl` directory, and starts R with the `r_demo` and `r_verify` export lists loaded. Nix supplies R, R6 and the build dependencies. Changed sources rebuild on subsequent invocations. Try `r_demo$r_demo__add(20, 22)` or `counter <- r_demo$r_demo__Counter$new(20); counter$add(22); counter$close()`. Exit with `q()` or Ctrl-D. The session uses its own startup profile and skips saved workspaces and user/site environment files. With an already configured R-enabled build, `cmake --build build --target r-repl` starts the same session without entering Nix.

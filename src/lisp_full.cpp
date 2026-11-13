@@ -156,6 +156,7 @@ struct Group {
     bool is_static = false;
     std::string symbol;        // generated C++ function
     std::size_t index = 0;     // its index in the native function table
+    std::string module;        // policy submodule of a module function ("" = the main package)
 };
 struct FieldPlan { const Field* field; std::string name; std::string getter, setter; std::size_t getter_index = 0, setter_index = 0; };
 struct ConstantPlan { std::string name, expression; const Type* type; const Documentation* documentation; std::string symbol; std::size_t index = 0; };
@@ -221,7 +222,7 @@ std::string description(const Documentation& doc, const std::string& package) {
 class Generator {
 public:
     Generator(const Module& module, const std::string& name, bool skip, const BindingPolicy& policy, const LispFullOptions& options)
-        : module_(module), name_(name), skip_(skip), policy_(resolve_reexports(policy, module)), flat_(policy.names == "flat"), options_(options) {}
+        : module_(module), name_(name), skip_(skip), policy_(resolve_reexports(policy, module)), flat_(policy.names == "flat"), options_(options) { validate_modules(policy_, module_); }
     GeneratedLispSource run();
 
 private:
@@ -1244,7 +1245,7 @@ GeneratedLispSource Generator::run() {
             const auto found = group_index.find(lname);
             if (found == group_index.end()) {
                 group_index[lname] = plan.methods.size();
-                plan.methods.push_back({lname, {overload}, is_static, {}, 0});
+                plan.methods.push_back({lname, {overload}, is_static, {}, 0, {}});
             } else {
                 auto& group = plan.methods[found->second];
                 if (group.is_static != is_static) {
@@ -1258,7 +1259,7 @@ GeneratedLispSource Generator::run() {
             const auto found = operator_index.find(generic_name);
             if (found == operator_index.end()) {
                 operator_index[generic_name] = plan.operators.size();
-                plan.operators.push_back({generic_name, {overload}, false, {}, 0});
+                plan.operators.push_back({generic_name, {overload}, false, {}, 0, {}});
             } else plan.operators[found->second].overloads.push_back(overload);
         };
         for (const auto& method : record.methods) {
@@ -1318,14 +1319,22 @@ GeneratedLispSource Generator::run() {
         if (!why.empty()) { reject(function.qualified_name(), why); continue; }
         const auto specialization = function_template_names_.find(function.qualified_name());
         if (!function.template_name.empty() && specialization == function_template_names_.end()) continue;
+        const auto submodule = policy_module(policy_, function.namespaces);
         const auto lname = specialization != function_template_names_.end() ? lisp_name(specialization->second)
-            : renamed(function.qualified_name(), lisp_name(flat(function.namespaces) ? function.name : exported(function.qualified_name())));
-        const auto found = function_index.find(lname);
+            : renamed(function.qualified_name(), lisp_name(!submodule.empty() || flat(function.namespaces) ? function.name
+                                                                                     : exported(function.qualified_name())));
+        const auto key = submodule + "." + lname;
+        const auto found = function_index.find(key);
         if (found == function_index.end()) {
-            function_index[lname] = functions.size();
-            functions.push_back({lname, {{&function, {}}}, false, {}, 0});
+            function_index[key] = functions.size();
+            functions.push_back({lname, {{&function, {}}}, false, {}, 0, submodule.empty() ? std::string() : lisp_name(submodule)});
         } else functions[found->second].overloads.push_back({&function, {}});
     }
+    // Each policy submodule is its own package, PACKAGE.SUBMODULE, beside PACKAGE.rosetta.
+    std::set<std::string> submodules;
+    for (const auto& group : functions)
+        if (!group.module.empty() && submodules.insert(group.module).second && group.module == "rosetta")
+            throw BindingError("Lisp submodule name rosetta is reserved for the runtime package " + package_ + ".rosetta");
 
     // Generic functions: instance methods and fields of every class; operators.
     struct GenericPlan { std::vector<std::pair<std::string, std::string>> owners; bool setf = false; }; // (class, kind)
@@ -1361,7 +1370,7 @@ GeneratedLispSource Generator::run() {
     std::map<std::string, std::size_t> function_with_generic; // function group index -> shares a generic's name
     for (const auto& [name, plan] : generics) reserve(functions_taken, name, "generic function " + name);
     std::set<std::string> function_names;
-    for (const auto& group : functions) function_names.insert(group.name);
+    for (const auto& group : functions) if (group.module.empty()) function_names.insert(group.name);
     for (const auto& owner : class_order_) {
         auto& plan = classes_.at(owner);
         // A C++ function make_<class> keeps its name; the class is made with MAKE-INSTANCE.
@@ -1372,6 +1381,7 @@ GeneratedLispSource Generator::run() {
     }
     for (std::size_t i = 0; i < functions.size(); ++i) {
         const auto& group = functions[i];
+        if (!group.module.empty()) continue; // its own package: no generic or name clashes
         if (generics.count(group.name)) {
             // A function named like a generic function becomes its method on T.
             const bool zero = std::any_of(group.overloads.begin(), group.overloads.end(), [](const Overload& o) {
@@ -1413,7 +1423,8 @@ GeneratedLispSource Generator::run() {
     {
         std::map<std::string, std::string> function_names;
         for (const auto& group : functions)
-            for (const auto& overload : group.overloads) function_names.emplace(overload.function->qualified_name(), group.name);
+            if (group.module.empty())
+                for (const auto& overload : group.overloads) function_names.emplace(overload.function->qualified_name(), group.name);
         for (const auto& reexport : module_.reexports) {
             std::string target, kind;
             if (reexport.kind == "record" || reexport.kind == "type") { const auto c = classes_.find(reexport.target); if (c != classes_.end()) { target = c->second.lisp; kind = "class"; } }
@@ -1471,7 +1482,7 @@ GeneratedLispSource Generator::run() {
         std::map<std::string, std::size_t> index;
         for (const auto& [generic_name, overload] : free_operators[""]) {
             const auto found = index.find(generic_name);
-            if (found == index.end()) { index[generic_name] = t_operators.size(); t_operators.push_back({generic_name, {overload}, false, {}, 0}); }
+            if (found == index.end()) { index[generic_name] = t_operators.size(); t_operators.push_back({generic_name, {overload}, false, {}, 0, {}}); }
             else t_operators[found->second].overloads.push_back(overload);
         }
         std::ostringstream unit;
@@ -1612,7 +1623,7 @@ GeneratedLispSource Generator::run() {
     }
     for (const auto& [qualified, lname] : enum_names_) exporting(lname);
     for (const auto& [name, plan] : generics) exporting(name);
-    for (const auto& group : functions) exporting(group.name);
+    for (const auto& group : functions) if (group.module.empty()) exporting(group.name);
     for (const auto& constant : constants) exporting(constant.name);
     for (const auto& alias : aliases) {
         exporting(alias.name);
@@ -1646,7 +1657,22 @@ GeneratedLispSource Generator::run() {
     }
     lisp << "  (:documentation " << lisp_string("Native C++ module " + name_ + ", bound by Rosetta.") << ")\n"
          << "  (:export" << exports.str() << "))\n\n"
-         << "(defpackage #:" << package_ << ".rosetta\n  (:use #:common-lisp)\n"
+         ;
+    for (const auto& submodule : submodules) {
+        std::set<std::string> seen;
+        lisp << "(defpackage #:" << package_ << "." << submodule << "\n  (:use)\n";
+        if (!options_.nicknames.empty()) {
+            lisp << "  (:nicknames";
+            for (const auto& nickname : options_.nicknames) lisp << " #:" << nickname << "." << submodule;
+            lisp << ")\n";
+        }
+        lisp << "  (:documentation " << lisp_string("Functions of the C++ namespace mapped to submodule " + submodule + " of " + name_ + ".") << ")\n"
+             << "  (:export";
+        for (const auto& group : functions)
+            if (group.module == submodule && seen.insert(group.name).second) lisp << "\n   #:" << symbol_text(group.name);
+        lisp << "))\n\n";
+    }
+    lisp << "(defpackage #:" << package_ << ".rosetta\n  (:use #:common-lisp)\n"
          << "  (:documentation " << lisp_string("Rosetta runtime of " + package_ + " (internal).") << "))\n\n"
          << "(in-package #:" << package_ << ".rosetta)\n";
     {
@@ -1693,7 +1719,7 @@ GeneratedLispSource Generator::run() {
     for (const auto& owner : class_order_) {
         auto& plan = classes_.at(owner);
         if (plan.constructors.empty()) continue;
-        Group group{"make-" + plan.lisp, plan.constructors, false, {}, 0};
+        Group group{"make-" + plan.lisp, plan.constructors, false, {}, 0, {}};
         std::string call;
         const auto list = lambda_list(group, &call);
         lisp << "\n(register-constructor '" << sym(plan.lisp) << " " << plan.constructor_index << " " << (plan.director ? "t" : "nil") << ")\n";
@@ -1787,6 +1813,14 @@ GeneratedLispSource Generator::run() {
     }
     for (std::size_t i = 0; i < functions.size(); ++i) {
         const auto& group = functions[i];
+        if (!group.module.empty()) {
+            const auto qualified = package_ + "." + group.module + ":" + symbol_text(group.name);
+            std::string call;
+            const auto list = lambda_list(group, &call);
+            lisp << "\n(defun " << qualified << " " << list << "\n  " << lisp_string(group_doc(group, group.name, false)) << "\n"
+                 << "  (call " << group.index << " " << call << "))\n";
+            continue;
+        }
         if (generics.count(group.name)) {
             lisp << "\n(defmethod " << sym(group.name) << " ((self t) &rest args)\n  " << lisp_string(group_doc(group, group.name, false))
                  << "\n  (call " << group.index << " (cons self args)))\n";

@@ -55,6 +55,12 @@ struct BindingPolicy {
     std::string names = "qualified";
     // Namespace patterns whose members keep qualified (ns__name) names under "flat" naming.
     std::vector<std::string> qualify;
+    // Exact C++ namespace (e.g. "lib::data") to a target submodule name (e.g. "data"). Free
+    // functions declared directly in a mapped namespace are exported, under their unqualified
+    // names, into that submodule (lib.data.iris()) instead of the top level, in targets with
+    // nested modules; targets without them prefix the submodule name instead (data_iris).
+    // A mapped namespace may hold only free functions (see validate_modules).
+    std::map<std::string, std::string> modules;
     // "list" (default) or "tuple" for sequence results.
     std::string sequences = "list";
     // Ordered (pattern, [(C++ exception, Python exception)]) rules: the first rule whose
@@ -69,6 +75,11 @@ bool policy_match(const std::string& pattern, const std::string& name);
 
 BindingPolicy load_policy(const std::filesystem::path& path);
 struct Module;
+// The submodule a declaration in `namespaces` exports into, or "" for the top level.
+std::string policy_module(const BindingPolicy& policy, const std::vector<std::string>& namespaces);
+// Rejects exported classes, enumerations, variables and re-exports declared directly in a
+// mapped namespace: modules hold free functions only.
+void validate_modules(const BindingPolicy& policy, const Module& module);
 // Rewrites policy keys that name an entity through a using-declaration to the entity itself.
 BindingPolicy resolve_reexports(BindingPolicy policy, const Module& module);
 

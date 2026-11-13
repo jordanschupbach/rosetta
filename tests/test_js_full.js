@@ -234,6 +234,15 @@ check(api.run_visitor(summer, [1, 2]) === 30);
 same(summer.seen, [1, 2]);
 check(api.run_visitor(new api.Visitor(), [1, 2]) === 3);
 
+// Policy modules: features::data functions live on a nested object, not on the module.
+check(typeof api.data === "object" && api.data !== null);
+const unitVec = api.data.unit();
+check(unitVec instanceof api.Vec2 && unitVec.x === 1 && unitVec.y === 0);
+check(api.data.scaled(3) === 6 && api.data.scaled(2.5) === 6.25);
+check(api.data.repeat("ab") === "abab" && api.repeat("x", 3) === "xxx");
+check(!("unit" in api) && !("scaled" in api));
+same(Object.keys(api.data).sort(), ["repeat", "scaled", "unit"]);
+
 // The TypeScript declarations document the module for editors.
 const types = fs.readFileSync(typesPath, "utf8");
 const has = (line) => { checks++; if (!types.split("\n").includes(line)) throw new Error("declarations lack: " + line); };
@@ -257,9 +266,12 @@ has("export declare function apply(f: ((a1: number) => number), x: number): numb
 has("export declare function count_words(words: string[]): Record<string, number>;");
 has("export { Circle as features__legacy__Circle };");
 has("    readonly point: Vec2;");
+has("export declare namespace data {");
+has("    export function unit(): Vec2;");
+has("    export function repeat(text: string): string;");
 // Every exported name is declared, and every declared name is exported.
 const declared = new Set();
-for (const m of types.matchAll(/^export declare (?:abstract )?(?:class|function|enum|const) (\w+)/gm)) declared.add(m[1]);
+for (const m of types.matchAll(/^export declare (?:abstract )?(?:class|function|enum|const|namespace) (\w+)/gm)) declared.add(m[1]);
 for (const m of types.matchAll(/^export \{ \w+ as (\w+) \};/gm)) declared.add(m[1]);
 for (const name of Object.keys(api)) check(declared.has(name), "undeclared export " + name);
 for (const name of declared) check(name in api, "declared but not exported: " + name);

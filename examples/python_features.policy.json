@@ -4,6 +4,7 @@
   "names": "flat",
   "sequences": "vector",
   "qualify": ["features::legacy"],
+  "modules": { "features::data": "data" },
   "copy_types": ["features::Stamp"],
   "exceptions": [
     { "match": "features::repeat", "map": [["std::exception", "RuntimeError"]] }

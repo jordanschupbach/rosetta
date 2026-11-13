@@ -208,4 +208,13 @@ check(has("#' Adds three integers, Socha & Dorigo style."), has("#' add(a, b = 1
       has("#' * `$x` (`numeric`): Horizontal component."), has("#' @rdname Circle"),
       has("#' @param values `numeric vector`"), has("#' @param shapes `list of Shape`"),
       has("#' @format A list of enumerator names, which arguments of this type accept: `\"circle\"`, `\"square\"`, `\"custom\"`."))
+# Policy modules: features::data functions live in the list `data`, not at the top level.
+check(is.list(api$data), setequal(names(api$data), c("unit", "scaled", "repeat_")))
+u <- api$data$unit()
+check(inherits(u, "Vec2"), u$x == 1, u$y == 0)
+check(api$data$scaled(3L) == 6, api$data$scaled(2.5) == 6.25)
+check(api$data$repeat_("ab") == "abab", api$repeat_("x", 3) == "xxx")
+check(is.null(api$unit), is.null(api$scaled))
+check(has("#' Functions of the C++ namespace `features::data`"), has("`data` <- list("),
+      any(startsWith(generated, "#'   \\item{`data$scaled(value)`}{An overloaded submodule function.}")))
 cat("R6 features passed\n")

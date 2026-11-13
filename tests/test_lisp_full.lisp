@@ -236,5 +236,13 @@
 (check (search "values  (vector double-float)" (documentation 'ft:run-visitor 'function)) "sequence type")
 (check (search "shapes  (vector shape)" (documentation 'ft:total-area 'function)) "class sequence type")
 (check (search "(function (double-float) double-float)" (documentation 'ft:apply 'function)) "callback type")
+;; Policy modules: features::data functions live in their own package FEATURES.DATA (nickname FT.DATA).
+(check (eq (find-package "FT.DATA") (find-package "FEATURES.DATA")) "submodule package and nickname")
+(let ((u (ft.data:unit)))
+  (check (and (typep u 'ft:vec2) (= (ft:x u) 1) (= (ft:y u) 0)) "submodule result"))
+(check (and (= (ft.data:scaled 3) 6) (= (ft.data:scaled 2.5d0) 6.25d0)) "submodule overloads")
+(check (and (equal (ft.data:repeat "ab") "abab") (equal (ft:repeat "x" 3) "xxx")) "submodule names are separate")
+(check (not (eq (nth-value 1 (find-symbol "SCALED" "FEATURES")) :external)) "nothing leaks to the main package")
+(check (search "C++ `features::data::unit`" (or (documentation 'ft.data:unit 'function) "")) "submodule docs")
 (gc)
 (format t "Common Lisp full API passed (~D checks)~%" *checks*)

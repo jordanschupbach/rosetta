@@ -330,7 +330,7 @@ enum class Use { parameter, result, element, callback_argument, callback_result 
 class Generator {
 public:
     Generator(const Module& module, const std::string& name, bool skip, const BindingPolicy& policy, const CobolFullOptions& options)
-        : module_(module), name_(name), skip_(skip), policy_(resolve_reexports(policy, module)), flat_(policy.names == "flat"), options_(options) {}
+        : module_(module), name_(name), skip_(skip), policy_(resolve_reexports(policy, module)), flat_(policy.names == "flat"), options_(options) { validate_modules(policy_, module_); }
     GeneratedCobolFullSource run();
 
 private:
@@ -386,6 +386,8 @@ private:
         return true;
     }
     std::string scoped_word(const std::vector<std::string>& namespaces, const std::string& name) const {
+        // COBOL has no nested modules: a policy submodule becomes a name prefix (DATA-IRIS).
+        if (const auto submodule = policy_module(policy_, namespaces); !submodule.empty()) return word(submodule) + "-" + word(name);
         if (flat(namespaces)) return word(name);
         std::string text;
         for (const auto& part : namespaces) text += word(part) + "-";

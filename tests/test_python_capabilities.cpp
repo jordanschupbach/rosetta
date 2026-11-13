@@ -1,5 +1,6 @@
 #include "rosetta/frontend.hpp"
 #include "rosetta/python.hpp"
+#include "rosetta/policy.hpp"
 #include "rosetta/cli.hpp"
 #include "process.hpp"
 #include <functional>
@@ -102,6 +103,34 @@ int main(int argc, char** argv) {
             const auto generated_case = rosetta::generate_python(parse(test.source), "api", false, all);
             require(contains(generated_case.source, test.expected), std::string(test.label) + ": expected " + test.expected);
             std::cout << "PASS supported " << test.label << '\n';
+        }
+
+        {
+            // Policy modules: free functions of a mapped namespace go to a submodule; anything else
+            // in that namespace, malformed names and two namespaces sharing a module are rejected.
+            rosetta::BindingPolicy mapped; mapped.select_all = true; mapped.names = "flat";
+            mapped.modules["lib::data"] = "data";
+            const auto generated_modules = rosetta::generate_python(parse(
+                "namespace lib { int value(); namespace data { int value(); int other(int); } }"), "api", false, mapped);
+            require(contains(generated_modules.source, "PyModule_New(\"api.data\")")
+                    && contains(generated_modules.source, "rosetta_submodule_functions_0[]"), "submodule not emitted");
+            rejects([&] { rosetta::generate_python(parse("namespace lib::data { struct Object {}; }"), "api", false, mapped); },
+                    "class lib::data::Object is in mapped namespace");
+            rejects([&] { rosetta::generate_python(parse("namespace lib::data { enum class Mode { a }; }"), "api", false, mapped); },
+                    "enumeration lib::data::Mode is in mapped namespace");
+            auto excluded = mapped; excluded.exclude = {"lib::data::Object"};
+            rosetta::generate_python(parse("namespace lib::data { struct Object {}; int value(); }"), "api", false, excluded);
+            rejects([&] { rosetta::generate_python(parse("namespace lib { namespace other { int data(); } namespace data { int value(); } }"), "api", false, mapped); },
+                    "Python export name collision: data");
+            const auto policy_path = temporary.path() / "modules.json";
+            for (const auto& [body, reason] : std::vector<std::pair<std::string, std::string>>{
+                     {R"({"version": 1, "modules": {"lib::data": "da-ta"}})", "must be an identifier"},
+                     {R"({"version": 1, "modules": {"lib::*": "data"}})", "exact namespaces"},
+                     {R"({"version": 1, "modules": {"lib::a": "data", "lib::b": "data"}})", "maps two namespaces to data"}}) {
+                rosetta::detail::write_file(policy_path, body);
+                rejects([&] { rosetta::load_policy(policy_path); }, reason);
+            }
+            std::cout << "PASS policy modules\n";
         }
 
         parse("int value(int = 42);");

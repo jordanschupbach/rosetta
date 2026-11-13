@@ -285,3 +285,13 @@ using features::area_of;
 using features::Kind;
 using Fill = features::Fill;
 } // namespace features::legacy
+
+namespace features::data {
+/// Mapped by the policy's modules: exported into the `data` submodule (features.data.unit()).
+inline Vec2 unit() { return {1, 0}; }
+/// An overloaded submodule function.
+inline int scaled(int value) { return value * 2; }
+inline double scaled(double value) { return value * 2.5; }
+/// Same unqualified name as features::repeat; the submodule keeps its own names.
+inline std::string repeat(const std::string& text) { return text + text; }
+} // namespace features::data

@@ -92,6 +92,7 @@ struct Group {
     std::vector<Overload> overloads;
     bool is_static = false;
     std::string symbol;        // generated C function
+    std::string module;        // policy submodule of a module function ("" = module table)
 };
 struct FieldPlan { const Field* field; std::string name; std::string getter, setter; };
 struct ConstantPlan { std::string name, expression; const Type* type; const Documentation* documentation; };
@@ -171,7 +172,7 @@ std::string meta_description(const Documentation& doc) {
 class Generator {
 public:
     Generator(const Module& module, const std::string& name, bool skip, const BindingPolicy& policy, std::size_t parts)
-        : module_(module), name_(name), skip_(skip), policy_(resolve_reexports(policy, module)), flat_(policy.names == "flat"), parts_(parts) {}
+        : module_(module), name_(name), skip_(skip), policy_(resolve_reexports(policy, module)), flat_(policy.names == "flat"), parts_(parts) { validate_modules(policy_, module_); }
     GeneratedLuaSource run();
 
 private:
@@ -1098,7 +1099,7 @@ GeneratedLuaSource Generator::run() {
             const auto found = group_index.find(lname);
             if (found == group_index.end()) {
                 group_index[lname] = plan.methods.size();
-                plan.methods.push_back({lname, {overload}, is_static, {}});
+                plan.methods.push_back({lname, {overload}, is_static, {}, {}});
             } else {
                 auto& group = plan.methods[found->second];
                 if (group.is_static != is_static) {
@@ -1112,7 +1113,7 @@ GeneratedLuaSource Generator::run() {
             const auto found = meta_index.find(meta);
             if (found == meta_index.end()) {
                 meta_index[meta] = plan.metamethods.size();
-                plan.metamethods.push_back({meta, {overload}, false, {}});
+                plan.metamethods.push_back({meta, {overload}, false, {}, {}});
             } else plan.metamethods[found->second].overloads.push_back(overload);
         };
         for (const auto& method : record.methods) {
@@ -1173,15 +1174,23 @@ GeneratedLuaSource Generator::run() {
         if (!why.empty()) { reject(function.qualified_name(), why); continue; }
         const auto specialization = function_template_names_.find(function.qualified_name());
         if (!function.template_name.empty() && specialization == function_template_names_.end()) continue;
+        const auto submodule = policy_module(policy_, function.namespaces);
         const auto lname = specialization != function_template_names_.end() ? specialization->second
-            : renamed(function.qualified_name(), lua_safe(flat(function.namespaces) ? function.name : exported(function.qualified_name())));
-        const auto found = function_index.find(lname);
+            : renamed(function.qualified_name(), lua_safe(!submodule.empty() || flat(function.namespaces) ? function.name
+                                                                                    : exported(function.qualified_name())));
+        const auto key = submodule + "." + lname;
+        const auto found = function_index.find(key);
         if (found == function_index.end()) {
-            function_index[lname] = functions.size();
-            functions.push_back({lname, {{&function, {}}}, false, {}});
+            function_index[key] = functions.size();
+            functions.push_back({lname, {{&function, {}}}, false, {}, submodule});
         } else functions[found->second].overloads.push_back({&function, {}});
     }
-    for (const auto& group : functions) reserve(group.name, "function " + group.overloads.front().function->qualified_name());
+    // Submodules are module fields too; their functions are unique within each submodule.
+    std::set<std::string> submodules;
+    for (const auto& group : functions) {
+        if (group.module.empty()) reserve(group.name, "function " + group.overloads.front().function->qualified_name());
+        else if (submodules.insert(group.module).second) reserve(group.module, "submodule " + group.module);
+    }
 
     // Constant namespace-scope variables.
     std::vector<ConstantPlan> constants;
@@ -1209,7 +1218,8 @@ GeneratedLuaSource Generator::run() {
     {
         std::map<std::string, std::string> function_names;
         for (const auto& group : functions)
-            for (const auto& overload : group.overloads) function_names.emplace(overload.function->qualified_name(), group.name);
+            if (group.module.empty())
+                for (const auto& overload : group.overloads) function_names.emplace(overload.function->qualified_name(), group.name);
         for (const auto& reexport : module_.reexports) {
             std::string target;
             if (reexport.kind == "record" || reexport.kind == "type") { const auto c = classes_.find(reexport.target); if (c != classes_.end()) target = c->second.lua; }
@@ -1427,13 +1437,17 @@ GeneratedLuaSource Generator::run() {
                   << "        lua_pushvalue(L, cls);\n        lua_setfield(L, -2, " << quote(plan.member) << ");\n        lua_pop(L, 1);\n";
         setup << "        lua_settop(L, cls - 1);\n    }\n";
     }
-    if (!functions.empty()) {
+    // Top-level functions go into the module table; each policy submodule is a table of its functions.
+    std::map<std::string, std::vector<std::pair<std::string, std::string>>> module_items;
+    for (const auto& group : functions) module_items[group.module].emplace_back(group.name, group.symbol);
+    for (const auto& [submodule, items] : module_items) {
         setup << "    {\n";
-        std::vector<std::pair<std::string, std::string>> items;
-        for (const auto& group : functions) items.emplace_back(group.name, group.symbol);
+        if (!submodule.empty()) setup << "        lua_createtable(L, 0, " << items.size() << ");\n";
         std::ostringstream reg;
         registry(reg, items);
-        setup << reg.str() << "    }\n";
+        setup << reg.str();
+        if (!submodule.empty()) setup << "        lua_setfield(L, module, " << quote(submodule) << ");\n";
+        setup << "    }\n";
     }
     for (const auto& [qualified, lname] : enum_names_) {
         const auto& enumeration = *enums_.at(qualified);
@@ -1534,7 +1548,13 @@ GeneratedLuaSource Generator::run() {
             meta << name_ << "." << classes_.at(enumeration.owner).lua << "." << lua_safe(renamed(qualified, enumeration.name)) << " = " << name_ << "." << lname << "\n";
     }
     meta << "\n";
-    for (const auto& group : functions) meta << meta_function(group, {}, name_, false);
+    for (const auto& group : functions) if (group.module.empty()) meta << meta_function(group, {}, name_, false);
+    for (const auto& submodule : submodules) {
+        meta << "---Functions of the C++ namespace mapped to `" << submodule << "` by the binding policy.\n"
+             << name_ << "." << submodule << " = {}\n\n";
+        for (const auto& group : functions)
+            if (group.module == submodule) meta << meta_function(group, {}, name_ + "." + submodule, false);
+    }
     for (const auto& constant : constants) {
         const auto text = meta_description(*constant.documentation);
         if (!text.empty()) meta << meta_lines(text);
