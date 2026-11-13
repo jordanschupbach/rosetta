@@ -1,8 +1,8 @@
 > Rosetta
 
-Rosetta generates source code that connects C\+\+ libraries to other languages through their native extension or FFI APIs. Lua uses a Lua 5.4 C API module loaded with `require`; R uses a native `.Call` bridge with R6, S3 or S4 interfaces; Python and Ruby use native extensions with owned classes; Octave uses native `.oct` modules with owned objects; Julia uses a generated `ccall` module and C ABI shared library; Java uses compiled Java classes and JNI libraries; C# uses generated .NET APIs and C ABI libraries; Fortran uses generated `ISO_C_BINDING` modules and C ABI libraries; Common Lisp uses a generated CFFI package and C ABI shared library; Tcl uses Tcl 9 stub-enabled extensions with object commands; Guile Scheme uses libguile extensions loaded by a generated module; OCaml uses C stubs declared as externals in a generated module, for both bytecode and native code; Go uses cgo packages that call C\+\+ stubs in a static archive; APL uses a C ABI library that Dyalog calls through `⎕NA` and GNU APL through a generated native function; COBOL uses generated copybooks of parameter records passed to C\+\+ stubs.
+Rosetta generates source code that connects C\+\+ libraries to other languages through their native extension or FFI APIs. Lua uses a Lua 5.4 C API module loaded with `require`; R uses a native `.Call` bridge with R6, S3 or S4 interfaces; Python and Ruby use native extensions with owned classes; JavaScript uses a Node-API addon with TypeScript declarations; Octave uses native `.oct` modules with owned objects; Julia uses a generated `ccall` module and C ABI shared library; Java uses compiled Java classes and JNI libraries; C# uses generated .NET APIs and C ABI libraries; Fortran uses generated `ISO_C_BINDING` modules and C ABI libraries; Common Lisp uses a generated CFFI package and C ABI shared library; Tcl uses Tcl 9 stub-enabled extensions with object commands; Guile Scheme uses libguile extensions loaded by a generated module; OCaml uses C stubs declared as externals in a generated module, for both bytecode and native code; Go uses cgo packages that call C\+\+ stubs in a static archive; APL uses a C ABI library that Dyalog calls through `⎕NA` and GNU APL through a generated native function; COBOL uses generated copybooks of parameter records passed to C\+\+ stubs.
 
-Rosetta itself is implemented in C\+\+17, built with CMake, and tested with C\+\+, Lua, R, Python, Ruby, Octave, Julia, Java, C#, Fortran, Common Lisp, Tcl, Guile Scheme, OCaml, Go, GNU APL and COBOL. This is a working prototype. It parses real C\+\+ with Clang, keeps declarations in a shared model, and emits native bindings. Its long-term goal is coverage of every C\+\+ feature through a native mapping, an explicit adapter, a concrete instantiation, or an opaque handle. An unrestricted C\+\+ program cannot automatically have an equivalent interface in every language; ownership, specialization, and runtime policies sometimes need user input.
+Rosetta itself is implemented in C\+\+17, built with CMake, and tested with C\+\+, Lua, R, Python, JavaScript, Ruby, Octave, Julia, Java, C#, Fortran, Common Lisp, Tcl, Guile Scheme, OCaml, Go, GNU APL and COBOL. This is a working prototype. It parses real C\+\+ with Clang, keeps declarations in a shared model, and emits native bindings. Its long-term goal is coverage of every C\+\+ feature through a native mapping, an explicit adapter, a concrete instantiation, or an opaque handle. An unrestricted C\+\+ program cannot automatically have an equivalent interface in every language; ownership, specialization, and runtime policies sometimes need user input.
 
 The Lua feature-family demo is complete through generated bindings and explicit native/Lua adapters. See the [feature coverage plan|docs/lua-feature-plan.md] for each contract and the [completion audit|docs/lua-coverage-audit.md] for implementation, test evidence and remaining product work.
 
@@ -1247,6 +1247,32 @@ cobc -x -free -fstatic-call -I copybooks program.cob -L. -llibrary -Q -lstdc++
 - In CMake, use `rosetta_generate_cobol(... COBOL_API full COBOL_PREFIX lib PARTS N)`; `COBOL_CALLBACKS`, `COBOL_TABLE_SIZE` and `COBOL_RESULT_SIZE` set the callbacks copybook path, the table capacity and the string result capacity.
 
 `tests/test_cobol_full.cob` (ctest `cobol_full`) exercises all of this on `examples/python_features.hpp`; datamunge's COBOL bindings use it. Tested with GnuCOBOL 3.2 on Linux (x86-64).
+
+>> JavaScript
+
+Select JavaScript (Node.js) with `--language javascript`. Generation writes a Node-API addon source (C\+\+ against `node_api.h`, Node-API version 8, so one build loads in every current Node.js release) and TypeScript declarations `MODULE.d.ts` (beside the output, or `--js-types`). `--parts N` splits the addon over N sources that compile in parallel. Generation does not need Node.js; compiling the addon needs only Node's headers, and node-gyp or CMake's `rosetta_generate_javascript` both work:
+
+```{sh, nix-shell=".#readme-shell"}
+just run examples/python_features.hpp --language javascript --module features \
+  --policy examples/python_features.policy.json -o build/js/features.cpp
+cd build/js
+node_include="$(dirname "$(dirname "$(readlink -f "$(command -v node)")")")/include/node"
+clang++ -std=c++17 -shared -fPIC -I"$node_include" -I../../examples features.cpp \
+  $( [ "$(uname)" = Darwin ] && echo -undefined dynamic_lookup ) -o features.node
+node -e 'const f = require("./features.node"); const c = new f.Circle(2);
+console.log(c.area(), f.add(1), f.Kind.square, f.describe(c));'   # 12 111 1 circle:0
+```
+
+The module is library-shaped:
+
+- Classes are JavaScript classes (`new f.Circle(2)`, `instanceof`), with prototypes chained like the C\+\+ bases, fields as accessors and static members on the class. Results are the most-derived exported class. `close()` (and `Symbol.dispose`) releases a native object early; otherwise the garbage collector does.
+- Overloads and default arguments dispatch at run time (`undefined` counts as omitted); conversion failures are `TypeError`s naming the argument, `std::out_of_range` is a `RangeError`, other C\+\+ exceptions are `Error`s.
+- Sequences are arrays (numeric ones also accept typed arrays and Buffers), string-keyed maps are objects and other maps `Map`s, pairs and tuples are arrays, `std::optional` is a value or `null`, enums are frozen TypeScript-style objects (numbers both ways; arguments also accept the enumerator names).
+- A non-const reference parameter takes a `ref(value)` cell, updated in place. `std::function` parameters take JavaScript functions and results are callable functions.
+- Operators are methods (`a.plus(b)`, `a.times(2)`, `a.equals(b)`, `a.at(i)`); a class with `to_string()` prints through `toString()` and `console.log`.
+- Classes with virtual methods are subclassed in JavaScript: `class Mine extends f.Shape { area() { ... } }`. C\+\+ calls the overrides through a generated director, `super.method()` reaches the native implementation, ownership passed to C\+\+ keeps the JavaScript object alive, and an exception thrown in an override reaches the JavaScript caller unchanged.
+
+The declarations carry each C\+\+ Doxygen comment as JSDoc (`@param` with defaults, `@returns`, `@throws`, `@see`; undocumented overrides inherit their base's), so editors show the C\+\+ documentation on hover: point a package's `"types"` at the file, or put `MODULE.d.ts` beside the JavaScript file that loads the addon. Calling into JavaScript happens only on the thread that loaded the module. `just js-test` runs the example's test ([test_js_full.js|tests/test_js_full.js]).
 
 >> Full Lua API
 

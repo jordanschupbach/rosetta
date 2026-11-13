@@ -292,6 +292,12 @@ Next gates: other COBOL compilers; Windows.
 
 Validation: all six COBOL runtime programs (five free-format families and the fixed-format build) passed with GnuCOBOL 3.2 (Homebrew) and Clang from nixpkgs on macOS (arm64), with generated stubs compiled under warnings-as-errors. Other platforms remain unverified.
 
+## JavaScript verification
+
+JavaScript emits a Node-API addon and TypeScript declarations from the shared model, policies and the full Lua backend's class/overload/director planning. `just js-test` builds the shared library-shaped example (`examples/python_features.hpp`) as an addon and runs [test_js_full.js](../tests/test_js_full.js) under `node --expose-gc` (ctest `js_features`): classes and inheritance, most-derived results, ownership transfer and shared ownership, overloads and defaults, containers and typed arrays, Ref cells, callbacks both ways (an exception keeps its identity through C\+\+), operators as methods, borrowed references kept alive by their owner, templates and policy extensions, close/dispose and collection, JavaScript subclasses as directors (super calls, transfer to C\+\+ and back with the same object), and that every export is declared in the `.d.ts` with its JSDoc. Verified with Node.js 24 on Linux (x86-64); datamunge's Node binding (269 classes, 228 functions) is generated with it.
+
+Next gates: calls from non-JavaScript threads (thread-safe functions), async/Promise mappings, zero-copy typed-array views, macOS and Windows.
+
 ## Milestones
 
 | Phase | Work | Completion criteria |

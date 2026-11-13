@@ -30,6 +30,7 @@ add_library(rosetta_core
     src/lua.cpp
     src/lua_full.cpp
     src/lisp_full.cpp
+    src/js_full.cpp
     src/r.cpp
     src/python.cpp
     src/r6.cpp
@@ -282,6 +283,29 @@ if(ROSETTA_BUILD_EXAMPLES)
         endif()
         add_test(NAME lua_full_features COMMAND "${ROSETTA_LUA_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lua_full.lua"
             "$<TARGET_FILE:rosetta_lua_full_features>" "${generated_dir}/lua_full/library/features.lua")
+        # The JavaScript (Node-API) addon on the same example; needs node and its node_api.h.
+        find_program(ROSETTA_NODE_EXECUTABLE NAMES node)
+        if(ROSETTA_NODE_EXECUTABLE)
+            get_filename_component(node_bin "${ROSETTA_NODE_EXECUTABLE}" REALPATH)
+            get_filename_component(node_prefix "${node_bin}" DIRECTORY)
+            get_filename_component(node_prefix "${node_prefix}" DIRECTORY)
+            find_path(ROSETTA_NODE_API_INCLUDE_DIR node_api.h HINTS "${node_prefix}/include/node" PATH_SUFFIXES node)
+        endif()
+        if(ROSETTA_NODE_EXECUTABLE AND ROSETTA_NODE_API_INCLUDE_DIR)
+            rosetta_generate_javascript(HEADER "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.hpp" MODULE features
+                CLANG "${ROSETTA_CLANG_EXECUTABLE}" OUTPUT "${generated_dir}/js/features.cpp"
+                POLICY "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.policy.json" PARTS 2)
+            add_library(rosetta_js_features MODULE "${generated_dir}/js/features.cpp" "${generated_dir}/js/features_1.cpp")
+            target_compile_features(rosetta_js_features PRIVATE cxx_std_17)
+            target_include_directories(rosetta_js_features PRIVATE "${ROSETTA_NODE_API_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+            set_target_properties(rosetta_js_features PROPERTIES PREFIX "" SUFFIX ".node" OUTPUT_NAME features
+                LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/js")
+            if(APPLE)
+                target_link_options(rosetta_js_features PRIVATE -undefined dynamic_lookup)
+            endif()
+            add_test(NAME js_features COMMAND "${ROSETTA_NODE_EXECUTABLE}" --expose-gc "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_js_full.js"
+                "$<TARGET_FILE:rosetta_js_features>" "${generated_dir}/js/features.d.ts")
+        endif()
         # The full Common Lisp API on the same example; needs SBCL with cffi and trivial-garbage
         # on the ASDF source registry (the nix shell's CL_SOURCE_REGISTRY provides them).
         find_program(ROSETTA_SBCL_EXECUTABLE NAMES sbcl)

@@ -248,6 +248,7 @@
           pkgs.pkg-config
           pkgs.nlohmann_json
           pkgs.lua5_4
+          pkgs.nodejs
           pkgs.python3
           pkgs.ruby
           pkgs.dotnet-sdk_10

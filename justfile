@@ -66,6 +66,17 @@ _python-test:
     cmake --build {{build_dir}}/python-tests --parallel
     ctest --test-dir {{build_dir}}/python-tests --output-on-failure --parallel
 
+# Enter Nix and run the JavaScript (Node-API) backend test: the shared feature example as an
+# addon, exercised from node, plus its TypeScript declarations.
+js-test:
+    nix develop path:. --command just _js-test
+
+[private]
+_js-test:
+    cmake -S . -B {{build_dir}}/js-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=ON -DBUILD_TESTING=ON
+    cmake --build {{build_dir}}/js-tests --parallel --target rosetta rosetta_js_features
+    ctest --test-dir {{build_dir}}/js-tests --output-on-failure -R '^js_features$'
+
 # Enter Nix, build the Python extensions, and open Python with demo and verify loaded.
 python-repl:
     nix develop path:. --command just _python-repl

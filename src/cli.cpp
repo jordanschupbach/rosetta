@@ -1,6 +1,7 @@
 #include "rosetta/cli.hpp"
 #include "rosetta/frontend.hpp"
 #include "rosetta/lua.hpp"
+#include "rosetta/javascript.hpp"
 #include "rosetta/r.hpp"
 #include "rosetta/python.hpp"
 #include "rosetta/ruby.hpp"
@@ -31,7 +32,7 @@ namespace {
 constexpr const char* usage = R"(Usage: rosetta HEADER --module NAME -o OUTPUT [options] [-- CLANG_FLAGS...]
 
 Generate native language bindings from a C++ header.
-  --language lua|r|python|ruby|octave|julia|java|csharp|fortran|common-lisp|tcl|guile|ocaml|go|apl|cobol  Target language (default: lua)
+  --language lua|r|python|javascript|ruby|octave|julia|java|csharp|fortran|common-lisp|tcl|guile|ocaml|go|apl|cobol  Target language (default: lua)
   --object-system r6|s3|s4  R object system (default: r6)
   --r-output PATH       Generated R interface (default: OUTPUT with extension .R)
   --julia-output PATH   Generated Julia interface (default: OUTPUT with extension .jl)
@@ -66,6 +67,8 @@ Generate native language bindings from a C++ header.
                          Lua subclasses and operators
   --lua-meta PATH        LuaCATS stub documenting the module (--lua-api full; default: MODULE.lua
                          in a library/ directory beside OUTPUT)
+  --js-types PATH        TypeScript declarations (.d.ts, with the C++ documentation as JSDoc) for the
+                         --language javascript addon (default: MODULE.d.ts beside OUTPUT)
   --lisp-api minimal|full Common Lisp binding style (default: minimal); full adds CLOS classes,
                          generic functions, overloads, containers, enums, callbacks, Lisp
                          subclasses and docstrings
@@ -89,7 +92,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         std::string header, name, output, dump_ir, depfile, policy_path, clang = "clang++";
         std::string database_path, translation_unit, include_as;
         std::size_t python_parts = 1;
-        std::string language = "lua", object_system, r_output, julia_output, java_output, java_package, csharp_output, csharp_namespace, fortran_output, lisp_output, guile_output, ocaml_output, go_output, gnu_apl_output, dyalog_output, apl_library_dir, cobol_output, cobol_string_size, lua_api, lua_meta, lisp_api, lisp_system, lisp_nicknames, lisp_library, cobol_api, cobol_prefix, cobol_callbacks, cobol_table_size, cobol_result_size;
+        std::string language = "lua", object_system, r_output, julia_output, java_output, java_package, csharp_output, csharp_namespace, fortran_output, lisp_output, guile_output, ocaml_output, go_output, gnu_apl_output, dyalog_output, apl_library_dir, cobol_output, cobol_string_size, lua_api, lua_meta, lisp_api, lisp_system, lisp_nicknames, lisp_library, cobol_api, cobol_prefix, cobol_callbacks, cobol_table_size, cobol_result_size, js_types;
         std::optional<std::size_t> command_index;
         std::vector<std::string> extra_flags;
         std::vector<std::filesystem::path> scopes;
@@ -112,7 +115,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             }
             if (arg == "--module" || arg == "--output" || arg == "-o" || arg == "--clang" ||
                 arg == "--dump-ir" || arg == "--depfile" || arg == "--policy" || arg == "--language" || arg == "--compile-commands" ||
-                arg == "--translation-unit" || arg == "--command-index" || arg == "--object-system" || arg == "--r-output" || arg == "--julia-output" || arg == "--java-output" || arg == "--java-package" || arg == "--csharp-output" || arg == "--csharp-namespace" || arg == "--fortran-output" || arg == "--lisp-output" || arg == "--guile-output" || arg == "--ocaml-output" || arg == "--go-output" || arg == "--gnu-apl-output" || arg == "--dyalog-output" || arg == "--apl-library-dir" || arg == "--cobol-output" || arg == "--cobol-string-size" || arg == "--cobol-api" || arg == "--cobol-prefix" || arg == "--cobol-callbacks" || arg == "--cobol-table-size" || arg == "--cobol-result-size" || arg == "--include-as" || arg == "--python-parts" || arg == "--parts" || arg == "--lua-api" || arg == "--lua-meta" || arg == "--lisp-api" || arg == "--lisp-system" || arg == "--lisp-nicknames" || arg == "--lisp-library") {
+                arg == "--translation-unit" || arg == "--command-index" || arg == "--object-system" || arg == "--r-output" || arg == "--julia-output" || arg == "--java-output" || arg == "--java-package" || arg == "--csharp-output" || arg == "--csharp-namespace" || arg == "--fortran-output" || arg == "--lisp-output" || arg == "--guile-output" || arg == "--ocaml-output" || arg == "--go-output" || arg == "--gnu-apl-output" || arg == "--dyalog-output" || arg == "--apl-library-dir" || arg == "--cobol-output" || arg == "--cobol-string-size" || arg == "--cobol-api" || arg == "--cobol-prefix" || arg == "--cobol-callbacks" || arg == "--cobol-table-size" || arg == "--cobol-result-size" || arg == "--include-as" || arg == "--python-parts" || arg == "--parts" || arg == "--lua-api" || arg == "--lua-meta" || arg == "--js-types" || arg == "--lisp-api" || arg == "--lisp-system" || arg == "--lisp-nicknames" || arg == "--lisp-library") {
                 if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
                     throw BindingError("missing value for " + arg);
                 const auto& value = arguments[i];
@@ -133,6 +136,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
                 else if (arg == "--language") language = value;
                 else if (arg == "--lua-api") lua_api = value;
                 else if (arg == "--lua-meta") lua_meta = value;
+                else if (arg == "--js-types") js_types = value;
                 else if (arg == "--lisp-api") lisp_api = value;
                 else if (arg == "--lisp-system") lisp_system = value;
                 else if (arg == "--lisp-nicknames") lisp_nicknames = value;
@@ -172,7 +176,8 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         }
         if (header.empty() || name.empty() || output.empty())
             throw BindingError("HEADER, --module and --output are required; use --help for usage");
-        if (language != "lua" && language != "r" && language != "python" && language != "ruby" && language != "octave" && language != "julia" && language != "java" && language != "csharp" && language != "fortran" && language != "common-lisp" && language != "tcl" && language != "guile" && language != "ocaml" && language != "go" && language != "apl" && language != "cobol") throw BindingError("unsupported language: " + language);
+        if (language == "js" || language == "node") language = "javascript";
+        if (language != "lua" && language != "r" && language != "python" && language != "javascript" && language != "ruby" && language != "octave" && language != "julia" && language != "java" && language != "csharp" && language != "fortran" && language != "common-lisp" && language != "tcl" && language != "guile" && language != "ocaml" && language != "go" && language != "apl" && language != "cobol") throw BindingError("unsupported language: " + language);
         if (language != "lua" && (!lua_api.empty() || !lua_meta.empty())) throw BindingError("--lua-api and --lua-meta require --language lua");
         if (!lua_api.empty() && lua_api != "minimal" && lua_api != "full") throw BindingError("--lua-api must be minimal or full");
         const bool lua_full = language == "lua" && lua_api == "full";
@@ -190,8 +195,10 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         const bool cobol_full = language == "cobol" && cobol_api == "full";
         if (!cobol_full && (!cobol_prefix.empty() || !cobol_callbacks.empty() || !cobol_table_size.empty() || !cobol_result_size.empty()))
             throw BindingError("--cobol-prefix, --cobol-callbacks, --cobol-table-size and --cobol-result-size require --cobol-api full");
-        if (language != "python" && !lua_full && !lisp_full && !cobol_full && !(language == "r" && object_system != "s3" && object_system != "s4") && python_parts != 1)
-            throw BindingError("--parts requires --language python, r (R6), lua (--lua-api full), common-lisp (--lisp-api full) or cobol (--cobol-api full)");
+        if (language != "javascript" && !js_types.empty()) throw BindingError("--js-types requires --language javascript");
+        if (language == "javascript" && js_types.empty()) js_types = (std::filesystem::path(output).parent_path() / (name + ".d.ts")).string();
+        if (language != "python" && language != "javascript" && !lua_full && !lisp_full && !cobol_full && !(language == "r" && object_system != "s3" && object_system != "s4") && python_parts != 1)
+            throw BindingError("--parts requires --language python, javascript, r (R6), lua (--lua-api full), common-lisp (--lisp-api full) or cobol (--cobol-api full)");
         if (r_package && (language != "r" || object_system == "s3" || object_system == "s4"))
             throw BindingError("--r-package requires --language r with the R6 object system");
         if (language != "r" && (!object_system.empty() || !r_output.empty()))
@@ -275,7 +282,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         if (language == "csharp" && csharp_output.empty()) csharp_output = (std::filesystem::path(output).parent_path() / (name + ".cs")).string();
         if (language != "fortran" && !fortran_output.empty()) throw BindingError("--fortran-output requires --language fortran");
         if (language == "fortran" && fortran_output.empty()) fortran_output = (std::filesystem::path(output).parent_path() / (name + ".f90")).string();
-        const auto interface_output = language == "cobol" ? cobol_output : language == "apl" ? gnu_apl_output : language == "go" ? go_output : language == "ocaml" ? ocaml_output : language == "guile" ? guile_output : language == "common-lisp" ? lisp_output : language == "fortran" ? fortran_output : language == "csharp" ? csharp_output : language == "java" ? java_output : language == "julia" ? julia_output : language == "lua" ? lua_meta : r_output;
+        const auto interface_output = language == "javascript" ? js_types : language == "cobol" ? cobol_output : language == "apl" ? gnu_apl_output : language == "go" ? go_output : language == "ocaml" ? ocaml_output : language == "guile" ? guile_output : language == "common-lisp" ? lisp_output : language == "fortran" ? fortran_output : language == "csharp" ? csharp_output : language == "java" ? java_output : language == "julia" ? julia_output : language == "lua" ? lua_meta : r_output;
         if (database_path.empty() && (!translation_unit.empty() || command_index))
             throw BindingError("--translation-unit and --command-index require --compile-commands");
         const auto compilation = database_path.empty() ? std::optional<CompilationCommand>{} :
@@ -329,7 +336,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             if (compilation) { protected_paths.push_back(compilation->database); protected_paths.push_back(compilation->file); }
             for (const auto& path : protected_paths)
                 if (same_file(interface_path, path)) throw BindingError(language == "cobol" ? "COBOL copybook and inputs/outputs must have distinct paths" : language == "apl" ? "APL scripts and inputs/outputs must have distinct paths" : language == "go" ? "Go package file and inputs/outputs must have distinct paths" : language == "ocaml" ? "OCaml module and inputs/outputs must have distinct paths" : language == "guile" ? "Guile module and inputs/outputs must have distinct paths" : language == "common-lisp" ? "Common Lisp interface and inputs/outputs must have distinct paths" : language == "fortran" ? "Fortran interface and inputs/outputs must have distinct paths" : language == "csharp" ? "C# interface and inputs/outputs must have distinct paths" : language == "java" ? "Java interface and inputs/outputs must have distinct paths" :
-                    language == "julia" ? "Julia interface and inputs/outputs must have distinct paths" : language == "lua" ? "Lua stub and inputs/outputs must have distinct paths" : "R interface and inputs/outputs must have distinct paths");
+                    language == "julia" ? "Julia interface and inputs/outputs must have distinct paths" : language == "javascript" ? "TypeScript declarations and inputs/outputs must have distinct paths" : language == "lua" ? "Lua stub and inputs/outputs must have distinct paths" : "R interface and inputs/outputs must have distinct paths");
         }
         const auto policy = policy_path.empty() ? BindingPolicy{} : load_policy(policy_path);
         std::vector<std::string> flags{"-std=c++17"};
@@ -457,6 +464,15 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             const auto java = generate_java(module, name, skip, policy, java_package);
             generated = {java.source, java.diagnostics};
             language_interface = java.interface;
+        } else if (language == "javascript") {
+            const auto js = generate_javascript(module, name, skip, policy, python_parts);
+            generated = {js.source, js.diagnostics};
+            for (std::size_t i = 0; i < js.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, js.parts[i]);
+            }
+            language_interface = js.types;
         } else if (lua_full) {
             const auto lua = generate_lua_full(module, name, skip, policy, python_parts);
             generated = {lua.source, lua.diagnostics};
