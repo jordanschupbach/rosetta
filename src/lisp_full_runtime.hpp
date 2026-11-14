@@ -14,6 +14,73 @@ namespace rosetta::detail {
 inline constexpr const char* lisp_full_runtime_parts[] = {
 R"cpp(
 namespace ROSETTA_LISP_MODULE { namespace rosetta_lisp {
+// ---------------------------------------------------------------- wording
+// The runtime is shared by the full Common Lisp and Julia backends (C ABI with one entry point);
+// messages name the values of the language on the other side. The Julia and C# generators define
+// ROSETTA_FULL_JULIA or ROSETTA_FULL_CSHARP before this runtime.
+struct Words {
+#if defined(ROSETTA_FULL_JULIA)
+    static constexpr const char* language = "Julia";
+    static constexpr const char* nil = "nothing";
+    static constexpr const char* t = "true";
+    static constexpr const char* boolean = "true or false";
+    static constexpr const char* integer = "Integer";
+    static constexpr const char* real = "Float64";
+    static constexpr const char* complex = "Complex";
+    static constexpr const char* string = "String";
+    static constexpr const char* symbol = "Symbol :";
+    static constexpr const char* bytes = "Vector{UInt8}";
+    static constexpr const char* reals = "Vector{Float64}";
+    static constexpr const char* list = "vector";
+    static constexpr const char* cons = "Pair";
+    static constexpr const char* map = "Dict";
+    static constexpr const char* function = "Function";
+    static constexpr const char* ref = "Ref";
+    static constexpr const char* sequence = "a vector or tuple";
+    static constexpr const char* mapping = "a Dict or a vector of pairs";
+    static constexpr const char* tuple_kind = "tuple or vector";
+#elif defined(ROSETTA_FULL_CSHARP)
+    static constexpr const char* language = "C#";
+    static constexpr const char* nil = "null";
+    static constexpr const char* t = "true";
+    static constexpr const char* boolean = "a bool";
+    static constexpr const char* integer = "an integer";
+    static constexpr const char* real = "a double";
+    static constexpr const char* complex = "a Complex";
+    static constexpr const char* string = "a string";
+    static constexpr const char* symbol = "enum ";
+    static constexpr const char* bytes = "a byte[]";
+    static constexpr const char* reals = "a double[]";
+    static constexpr const char* list = "sequence";
+    static constexpr const char* cons = "KeyValuePair";
+    static constexpr const char* map = "dictionary";
+    static constexpr const char* function = "delegate";
+    static constexpr const char* ref = "ref argument";
+    static constexpr const char* sequence = "an array, list or other IEnumerable";
+    static constexpr const char* mapping = "a dictionary";
+    static constexpr const char* tuple_kind = "tuple";
+#else
+    static constexpr const char* language = "Lisp";
+    static constexpr const char* nil = "NIL";
+    static constexpr const char* t = "T";
+    static constexpr const char* boolean = "T or NIL";
+    static constexpr const char* integer = "integer";
+    static constexpr const char* real = "float";
+    static constexpr const char* complex = "complex";
+    static constexpr const char* string = "string";
+    static constexpr const char* symbol = "symbol :";
+    static constexpr const char* bytes = "octet vector";
+    static constexpr const char* reals = "double-float vector";
+    static constexpr const char* list = "sequence";
+    static constexpr const char* cons = "cons";
+    static constexpr const char* map = "hash-table";
+    static constexpr const char* function = "function";
+    static constexpr const char* ref = "ref";
+    static constexpr const char* sequence = "a list or vector";
+    static constexpr const char* mapping = "a hash table or an association list";
+    static constexpr const char* tuple_kind = "list";
+#endif
+};
 // ---------------------------------------------------------------- errors
 // Errors of the binding itself (conversions, overload resolution, closed objects).
 struct Failure : std::runtime_error { using std::runtime_error::runtime_error; };
@@ -30,7 +97,8 @@ inline const char*& converting() { static thread_local const char* label = nullp
 enum Tag : unsigned char {
     tag_nil = 0, tag_t = 1, tag_int = 2, tag_bigint = 3, tag_real = 4, tag_string = 5, tag_list = 6,
     tag_reals = 7, tag_cons = 8, tag_map = 9, tag_object = 10, tag_lisp_object = 11, tag_function = 12,
-    tag_ref = 13, tag_symbol = 14, tag_bytes = 15, tag_tuple = 16, tag_argument = 17, tag_complex = 18
+    tag_ref = 13, tag_symbol = 14, tag_bytes = 15, tag_tuple = 16, tag_argument = 17, tag_complex = 18,
+    tag_false = 19 // Julia: false, distinct from nothing (Lisp sends NIL for both)
 };
 struct Holder;
 // A decoded Lisp value (arguments), or a value to encode (results).
@@ -48,7 +116,11 @@ struct Node {
     explicit Node(Tag k) : kind(k) {}
     bool nil() const { return kind == tag_nil; }
 };
+#if defined(ROSETTA_FULL_JULIA) || defined(ROSETTA_FULL_CSHARP)
+inline Node boolean(bool value) { return Node(value ? tag_t : tag_false); }
+#else
 inline Node boolean(bool value) { return Node(value ? tag_t : tag_nil); }
+#endif
 
 struct Reader {
     const unsigned char* at;
@@ -61,7 +133,7 @@ struct Reader {
         if (depth > 10000) fail("value nesting is too deep");
         Node n(static_cast<Tag>(u8()));
         switch (n.kind) {
-        case tag_nil: case tag_t: break;
+        case tag_nil: case tag_t: case tag_false: break;
         case tag_int: n.integer = raw<long long>(); break;
         case tag_real: n.real = raw<double>(); break;
         case tag_complex: n.real = raw<double>(); n.imag = raw<double>(); break;
@@ -99,7 +171,7 @@ struct Writer {
     void node(const Node& n) {
         u8(n.kind);
         switch (n.kind) {
-        case tag_nil: case tag_t: break;
+        case tag_nil: case tag_t: case tag_false: break;
         case tag_int: raw<long long>(n.integer); break;
         case tag_real: raw<double>(n.real); break;
         case tag_complex: raw<double>(n.real); raw<double>(n.imag); break;
@@ -237,7 +309,7 @@ struct Director {
     bool rosetta_has_self() const { return rosetta_id != 0 && Hooks::invoke; }
 };
 [[noreturn]] inline void pure_virtual(const char* name) {
-    fail(std::string("pure virtual method ") + name + " is not implemented by the Lisp subclass");
+    fail(std::string("pure virtual method ") + name + " is not implemented by the " + Words::language + " subclass");
 }
 inline bool is_director(const Node& n) {
     auto* holder = holder_of(n);
@@ -298,7 +370,7 @@ template<class T> Node wrap(T* value, Ownership ownership, int parent) {
     }
     if (!info->name) {
         if (ownership == Ownership::owned && info->destroy) info->destroy(ptr);
-        fail("C++ result type is not exported to Lisp");
+        fail(std::string("C++ result type is not exported to ") + Words::language);
     }
     return object(ptr, info, ownership, parent);
 }
@@ -315,7 +387,7 @@ template<class T> Node wrap_shared(std::shared_ptr<T> value) {
             ptr = const_cast<void*>(dynamic_cast<const void*>(value.get()));
         }
     }
-    if (!info->name) fail("C++ result type is not exported to Lisp");
+    if (!info->name) fail(std::string("C++ result type is not exported to ") + Words::language);
     Node n = object(ptr, info, Ownership::borrowed, -1);
     n.holder->shared = new std::shared_ptr<void>(std::const_pointer_cast<U>(value), ptr);
     return n;
@@ -355,20 +427,22 @@ R"cpp(
 // ---------------------------------------------------------------- values
 inline std::string type_name(const Node& n) {
     switch (n.kind) {
-    case tag_nil: return "NIL";
-    case tag_t: return "T";
-    case tag_int: case tag_bigint: return "integer";
-    case tag_real: return "float";
-    case tag_complex: return "complex";
-    case tag_string: return "string";
-    case tag_symbol: return "symbol :" + n.text;
-    case tag_bytes: return "octet vector";
-    case tag_reals: return "double-float vector[" + std::to_string(n.reals.size()) + "]";
-    case tag_list: return "sequence[" + std::to_string(n.items.size()) + "]";
-    case tag_cons: return "cons";
-    case tag_map: return "hash-table";
-    case tag_function: return "function";
-    case tag_ref: return "ref";
+    case tag_nil: return Words::nil;
+    case tag_t: return Words::t;
+    case tag_false: return "false";
+    case tag_int: case tag_bigint: return Words::integer;
+    case tag_real: return Words::real;
+    case tag_complex: return Words::complex;
+    case tag_string: return Words::string;
+    case tag_symbol: return Words::symbol + n.text;
+    case tag_bytes: return Words::bytes;
+    case tag_reals: return std::string(Words::reals) + "[" + std::to_string(n.reals.size()) + "]";
+    case tag_list: return std::string(Words::list) + "[" + std::to_string(n.items.size()) + "]";
+    case tag_tuple: return "tuple[" + std::to_string(n.items.size()) + "]";
+    case tag_cons: return Words::cons;
+    case tag_map: return Words::map;
+    case tag_function: return Words::function;
+    case tag_ref: return Words::ref;
     case tag_object:
         if (!n.holder) return "closed native object";
         return n.holder->magic == Holder::live && n.holder->info && n.holder->info->name ? n.holder->info->name : "native object";
@@ -416,9 +490,9 @@ inline double real_of(const Node& n) {
 }
 
 template<class T> struct Value<T, std::enable_if_t<std::is_same_v<T, bool>>> {
-    static bool check(const Node& n, bool) { return n.kind == tag_t || n.kind == tag_nil; }
+    static bool check(const Node& n, bool) { return n.kind == tag_t || n.kind == tag_nil || n.kind == tag_false; }
     static bool load(const Node& n) {
-        if (!check(n, false)) fail("expected T or NIL, got " + type_name(n));
+        if (!check(n, false)) fail(std::string("expected ") + Words::boolean + ", got " + type_name(n));
         return n.kind == tag_t;
     }
     static Node make(bool value) { return boolean(value); }
@@ -536,7 +610,7 @@ template<class T> struct Value<T, std::enable_if_t<std::is_enum_v<T>>> {
     using U = std::underlying_type_t<T>;
     static const std::pair<std::string, long long>* named(const std::string& name) {
         const auto key = folded(name);
-        for (const auto& entry : EnumTable<T>::entries) if (entry.first == key) return &entry;
+        for (const auto& entry : EnumTable<T>::entries) if (folded(entry.first) == key) return &entry;
         return nullptr;
     }
     static bool check(const Node& n, bool strict) {
@@ -621,7 +695,7 @@ R"cpp(
 // ---------------------------------------------------------------- sequences and maps
 // Sequences are Lisp lists or vectors in; vectors out (double-float vectors for floating point).
 // NIL is an empty container when checks are lenient.
-inline bool sequence(const Node& n) { return n.kind == tag_list || n.kind == tag_reals || n.kind == tag_bytes; }
+inline bool sequence(const Node& n) { return n.kind == tag_list || n.kind == tag_reals || n.kind == tag_bytes || n.kind == tag_tuple; }
 inline std::size_t length(const Node& n) {
     return n.kind == tag_reals ? n.reals.size() : n.kind == tag_bytes ? n.text.size() : n.items.size();
 }
@@ -674,7 +748,7 @@ template<class C, class E> struct Sequence {
     static C load(const Node& n) {
         C result;
         if (n.nil()) return result;
-        if (!sequence(n)) fail("expected a list or vector, got " + type_name(n));
+        if (!sequence(n)) fail(std::string("expected ") + Words::sequence + ", got " + type_name(n));
         const auto count = length(n);
         if constexpr (std::is_same_v<C, std::vector<E>>) result.reserve(count);
         for (std::size_t i = 0; i < count; ++i) {
@@ -691,7 +765,7 @@ template<class A> struct Value<std::vector<bool, A>> {
     static std::vector<bool, A> load(const Node& n) {
         std::vector<bool, A> result;
         if (n.nil()) return result;
-        if (!sequence(n)) fail("expected a list or vector, got " + type_name(n));
+        if (!sequence(n)) fail(std::string("expected ") + Words::sequence + ", got " + type_name(n));
         for (std::size_t i = 0; i < length(n); ++i) result.push_back(load_element<bool>(n, i));
         return result;
     }
@@ -733,7 +807,7 @@ template<class M, class K, class V> struct Mapping {
             for (std::size_t i = 0; i + 1 < n.items.size(); i += 2) if (!each(n.items[i], n.items[i + 1])) return false;
             return true;
         }
-        if (n.kind != tag_list) return false;
+        if (n.kind != tag_list && n.kind != tag_tuple) return false;
         for (const auto& item : n.items) {
             if (item.kind == tag_cons) { if (!each(item.items[0], item.items[1])) return false; }
             else return false;
@@ -748,7 +822,7 @@ template<class M, class K, class V> struct Mapping {
         M result;
         if (n.nil()) return result;
         const bool ok = entries(n, [&](const Node& k, const Node& v) { result.emplace(Value<K>::load(k), Value<V>::load(v)); return true; });
-        if (!ok) fail("expected a hash table or an association list, got " + type_name(n));
+        if (!ok) fail(std::string("expected ") + Words::mapping + ", got " + type_name(n));
         return result;
     }
     static Node make(const M& value) {
@@ -766,7 +840,7 @@ template<class... T> struct Product {
     static constexpr std::size_t N = sizeof...(T);
     static const std::vector<Node>* parts(const Node& n) {
         if (n.kind == tag_cons && N == 2) return &n.items;
-        if (n.kind == tag_list && n.items.size() == N) return &n.items;
+        if ((n.kind == tag_list || n.kind == tag_tuple) && n.items.size() == N) return &n.items;
         return nullptr;
     }
     template<std::size_t... I> static bool check_each(const Node& n, bool strict, std::index_sequence<I...>) {
@@ -776,7 +850,7 @@ template<class... T> struct Product {
     }
     template<class Tuple, std::size_t... I> static Tuple load_each(const Node& n, std::index_sequence<I...>) {
         const auto* items = parts(n);
-        if (!items) fail("expected a list of " + std::to_string(N) + " elements, got " + type_name(n));
+        if (!items) fail(std::string("expected a ") + Words::tuple_kind + " of " + std::to_string(N) + " elements, got " + type_name(n));
         return Tuple(Value<T>::load((*items)[I])...);
     }
     template<class Tuple, std::size_t... I> static Node make_each(const Tuple& value, std::index_sequence<I...>) {
@@ -965,7 +1039,7 @@ template<class R> R returned(const Node& n) {
         if constexpr (std::is_lvalue_reference_v<R> && bound_v<V>) return *native<V>(n);
         else if constexpr (std::is_pointer_v<V> && bound_v<std::remove_pointer_t<V>>) return Value<V>::load(n);
         else {
-            if (!Value<V>::check(n, false)) fail("Lisp callback returned " + type_name(n) + ", which does not convert to the C++ result type");
+            if (!Value<V>::check(n, false)) fail(std::string(Words::language) + " callback returned " + type_name(n) + ", which does not convert to the C++ result type");
             return Value<V>::load(n);
         }
     }
@@ -973,7 +1047,7 @@ template<class R> R returned(const Node& n) {
 // Calls into Lisp (a function, or a generic function on a director's Lisp object); Lisp errors
 // become C++ exceptions.
 template<class R> R invoke(int kind, unsigned long long id, unsigned generic, std::vector<Node>&& arguments) {
-    if (!Hooks::invoke) fail("the Lisp side of the module is not initialized");
+    if (!Hooks::invoke) fail(std::string("the ") + Words::language + " side of the module is not initialized");
     Writer writer;
     writer.raw<unsigned>(static_cast<unsigned>(arguments.size()));
     for (const auto& item : arguments) writer.node(item);
@@ -985,14 +1059,14 @@ template<class R> R invoke(int kind, unsigned long long id, unsigned generic, st
     struct Free { unsigned char* p; ~Free() { std::free(p); } } free_out{out};
     Reader reader{out, out + size};
     if (status != 0) {
-        std::string message = "error in Lisp callback";
+        std::string message = std::string("error in ") + Words::language + " callback";
         if (out && size) { const Node n = reader.node(); if (n.kind == tag_string) message = n.text; }
         if (status == 2) throw LispFailure(message);
         fail(message);
     }
     if constexpr (std::is_void_v<R>) return;
     else {
-        if (!out) fail("Lisp callback returned no value");
+        if (!out) fail(std::string(Words::language) + " callback returned no value");
         const Node n = reader.node();
         return returned<R>(n);
     }
@@ -1032,7 +1106,7 @@ template<class R, class... A> struct Value<std::function<R(A...)>> {
     static bool check(const Node& n, bool) { return n.nil() || n.kind == tag_function; }
     static F load(const Node& n) {
         if (n.nil()) return {};
-        if (n.kind != tag_function) fail("expected a function, got " + type_name(n));
+        if (n.kind != tag_function) fail(std::string("expected a ") + Words::function + ", got " + type_name(n));
         auto target = std::make_shared<LispRef>(n.id);
         return [target](A... arguments) -> R { return invoke_lisp<R, A...>(*target, std::forward<A>(arguments)...); };
     }

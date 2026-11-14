@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "select": "all",
+  "names": "flat",
+  "convert": { "shadow::Samples": "std::vector<double>" }
+}

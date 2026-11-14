@@ -36,6 +36,12 @@ Generate native language bindings from a C++ header.
   --object-system r6|s3|s4  R object system (default: r6)
   --r-output PATH       Generated R interface (default: OUTPUT with extension .R)
   --julia-output PATH   Generated Julia interface (default: OUTPUT with extension .jl)
+  --julia-api minimal|full Julia binding style (default: minimal); full adds abstract types for
+                        classes, generic functions, @subclass directors, properties, Base operators,
+                        containers, callbacks and Markdown docstrings from the C++ documentation
+  --julia-package NAME  Julia module name (--julia-api full; default: MODULE capitalized)
+  --julia-library NAME  Shared library base name the module loads (--julia-api full)
+  --julia-project PATH  Also write a Project.toml for the package (--julia-api full)
   --lisp-output PATH    Generated Common Lisp interface (default: OUTPUT with extension .lisp)
   --guile-output PATH   Generated Guile module (default: MODULE.scm beside OUTPUT)
   --ocaml-output PATH   Generated OCaml module (default: MODULE.ml beside OUTPUT)
@@ -53,7 +59,13 @@ Generate native language bindings from a C++ header.
   --java-output PATH    Generated Java interface (default: MODULE.java beside OUTPUT)
   --fortran-output PATH Generated Fortran interface (default: MODULE.f90 beside OUTPUT)
   --csharp-output PATH Generated C# interface (default: MODULE.cs beside OUTPUT)
-  --csharp-namespace NAME C# namespace (default: global namespace)
+  --csharp-namespace NAME C# namespace (default: global namespace; --csharp-api full: MODULE in PascalCase)
+  --csharp-api minimal|full C# binding style (default: minimal); full binds classes with inheritance,
+                        virtual methods C# subclasses override, PascalCase methods and properties,
+                        operators, containers, delegates and XML doc comments from the C++ documentation
+  --csharp-library NAME Shared library base name the C# side loads (--csharp-api full)
+  --csharp-project PATH Also write a .csproj for the interface (--csharp-api full)
+  --csharp-functions NAME Static class of the module functions (--csharp-api full; default: Functions)
   --java-package NAME   Java package (default: unnamed package)
   --clang PATH           Clang executable (default: clang++)
   --dump-ir PATH         Export the normalized declaration model as JSON
@@ -92,7 +104,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         std::string header, name, output, dump_ir, depfile, policy_path, clang = "clang++";
         std::string database_path, translation_unit, include_as;
         std::size_t python_parts = 1;
-        std::string language = "lua", object_system, r_output, julia_output, java_output, java_package, csharp_output, csharp_namespace, fortran_output, lisp_output, guile_output, ocaml_output, go_output, gnu_apl_output, dyalog_output, apl_library_dir, cobol_output, cobol_string_size, lua_api, lua_meta, lisp_api, lisp_system, lisp_nicknames, lisp_library, cobol_api, cobol_prefix, cobol_callbacks, cobol_table_size, cobol_result_size, js_types;
+        std::string language = "lua", object_system, r_output, julia_output, java_output, java_package, csharp_output, csharp_namespace, fortran_output, lisp_output, guile_output, ocaml_output, go_output, gnu_apl_output, dyalog_output, apl_library_dir, cobol_output, cobol_string_size, lua_api, lua_meta, lisp_api, lisp_system, lisp_nicknames, lisp_library, julia_api, julia_package, julia_library, julia_project, csharp_api, csharp_library, csharp_project, csharp_functions, cobol_api, cobol_prefix, cobol_callbacks, cobol_table_size, cobol_result_size, js_types;
         std::optional<std::size_t> command_index;
         std::vector<std::string> extra_flags;
         std::vector<std::filesystem::path> scopes;
@@ -115,7 +127,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             }
             if (arg == "--module" || arg == "--output" || arg == "-o" || arg == "--clang" ||
                 arg == "--dump-ir" || arg == "--depfile" || arg == "--policy" || arg == "--language" || arg == "--compile-commands" ||
-                arg == "--translation-unit" || arg == "--command-index" || arg == "--object-system" || arg == "--r-output" || arg == "--julia-output" || arg == "--java-output" || arg == "--java-package" || arg == "--csharp-output" || arg == "--csharp-namespace" || arg == "--fortran-output" || arg == "--lisp-output" || arg == "--guile-output" || arg == "--ocaml-output" || arg == "--go-output" || arg == "--gnu-apl-output" || arg == "--dyalog-output" || arg == "--apl-library-dir" || arg == "--cobol-output" || arg == "--cobol-string-size" || arg == "--cobol-api" || arg == "--cobol-prefix" || arg == "--cobol-callbacks" || arg == "--cobol-table-size" || arg == "--cobol-result-size" || arg == "--include-as" || arg == "--python-parts" || arg == "--parts" || arg == "--lua-api" || arg == "--lua-meta" || arg == "--js-types" || arg == "--lisp-api" || arg == "--lisp-system" || arg == "--lisp-nicknames" || arg == "--lisp-library") {
+                arg == "--translation-unit" || arg == "--command-index" || arg == "--object-system" || arg == "--r-output" || arg == "--julia-output" || arg == "--java-output" || arg == "--java-package" || arg == "--csharp-output" || arg == "--csharp-namespace" || arg == "--fortran-output" || arg == "--lisp-output" || arg == "--guile-output" || arg == "--ocaml-output" || arg == "--go-output" || arg == "--gnu-apl-output" || arg == "--dyalog-output" || arg == "--apl-library-dir" || arg == "--cobol-output" || arg == "--cobol-string-size" || arg == "--cobol-api" || arg == "--cobol-prefix" || arg == "--cobol-callbacks" || arg == "--cobol-table-size" || arg == "--cobol-result-size" || arg == "--include-as" || arg == "--python-parts" || arg == "--parts" || arg == "--lua-api" || arg == "--lua-meta" || arg == "--js-types" || arg == "--lisp-api" || arg == "--lisp-system" || arg == "--lisp-nicknames" || arg == "--lisp-library" || arg == "--julia-api" || arg == "--julia-package" || arg == "--julia-library" || arg == "--julia-project" || arg == "--csharp-api" || arg == "--csharp-library" || arg == "--csharp-project" || arg == "--csharp-functions") {
                 if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
                     throw BindingError("missing value for " + arg);
                 const auto& value = arguments[i];
@@ -144,6 +156,14 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
                 else if (arg == "--object-system") object_system = value;
                 else if (arg == "--r-output") r_output = value;
                 else if (arg == "--julia-output") julia_output = value;
+                else if (arg == "--julia-api") julia_api = value;
+                else if (arg == "--julia-package") julia_package = value;
+                else if (arg == "--julia-library") julia_library = value;
+                else if (arg == "--julia-project") julia_project = value;
+                else if (arg == "--csharp-api") csharp_api = value;
+                else if (arg == "--csharp-library") csharp_library = value;
+                else if (arg == "--csharp-project") csharp_project = value;
+                else if (arg == "--csharp-functions") csharp_functions = value;
                 else if (arg == "--java-output") java_output = value;
                 else if (arg == "--java-package") java_package = value;
                 else if (arg == "--fortran-output") fortran_output = value;
@@ -189,6 +209,18 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         const bool lisp_full = language == "common-lisp" && lisp_api == "full";
         if (!lisp_full && (!lisp_system.empty() || !lisp_nicknames.empty() || !lisp_library.empty()))
             throw BindingError("--lisp-system, --lisp-nicknames and --lisp-library require --lisp-api full");
+        if (language != "julia" && (!julia_api.empty() || !julia_package.empty() || !julia_library.empty() || !julia_project.empty()))
+            throw BindingError("--julia-api, --julia-package, --julia-library and --julia-project require --language julia");
+        if (!julia_api.empty() && julia_api != "minimal" && julia_api != "full") throw BindingError("--julia-api must be minimal or full");
+        const bool julia_full = language == "julia" && julia_api == "full";
+        if (!julia_full && (!julia_package.empty() || !julia_library.empty() || !julia_project.empty()))
+            throw BindingError("--julia-package, --julia-library and --julia-project require --julia-api full");
+        if (language != "csharp" && (!csharp_api.empty() || !csharp_library.empty() || !csharp_project.empty() || !csharp_functions.empty()))
+            throw BindingError("--csharp-api, --csharp-library, --csharp-project and --csharp-functions require --language csharp");
+        if (!csharp_api.empty() && csharp_api != "minimal" && csharp_api != "full") throw BindingError("--csharp-api must be minimal or full");
+        const bool csharp_full = language == "csharp" && csharp_api == "full";
+        if (!csharp_full && (!csharp_library.empty() || !csharp_project.empty() || !csharp_functions.empty()))
+            throw BindingError("--csharp-library, --csharp-project and --csharp-functions require --csharp-api full");
         if (language != "cobol" && (!cobol_api.empty() || !cobol_prefix.empty() || !cobol_callbacks.empty() || !cobol_table_size.empty() || !cobol_result_size.empty()))
             throw BindingError("--cobol-api, --cobol-prefix, --cobol-callbacks, --cobol-table-size and --cobol-result-size require --language cobol");
         if (!cobol_api.empty() && cobol_api != "minimal" && cobol_api != "full") throw BindingError("--cobol-api must be minimal or full");
@@ -197,8 +229,8 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             throw BindingError("--cobol-prefix, --cobol-callbacks, --cobol-table-size and --cobol-result-size require --cobol-api full");
         if (language != "javascript" && !js_types.empty()) throw BindingError("--js-types requires --language javascript");
         if (language == "javascript" && js_types.empty()) js_types = (std::filesystem::path(output).parent_path() / (name + ".d.ts")).string();
-        if (language != "python" && language != "javascript" && !lua_full && !lisp_full && !cobol_full && !(language == "r" && object_system != "s3" && object_system != "s4") && python_parts != 1)
-            throw BindingError("--parts requires --language python, javascript, r (R6), lua (--lua-api full), common-lisp (--lisp-api full) or cobol (--cobol-api full)");
+        if (language != "python" && language != "javascript" && !lua_full && !lisp_full && !julia_full && !csharp_full && !cobol_full && !(language == "r" && object_system != "s3" && object_system != "s4") && python_parts != 1)
+            throw BindingError("--parts requires --language python, javascript, r (R6), lua (--lua-api full), common-lisp (--lisp-api full), julia (--julia-api full), csharp (--csharp-api full) or cobol (--cobol-api full)");
         if (r_package && (language != "r" || object_system == "s3" || object_system == "s4"))
             throw BindingError("--r-package requires --language r with the R6 object system");
         if (language != "r" && (!object_system.empty() || !r_output.empty()))
@@ -293,7 +325,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         const auto dep_path = depfile.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(depfile);
         const auto interface_path = interface_output.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(interface_output);
         // APL's second script: the Dyalog namespace.
-        const auto second_output = !dyalog_output.empty() ? dyalog_output : !cobol_callbacks.empty() ? cobol_callbacks : lisp_system;
+        const auto second_output = !dyalog_output.empty() ? dyalog_output : !cobol_callbacks.empty() ? cobol_callbacks : !julia_project.empty() ? julia_project : !csharp_project.empty() ? csharp_project : lisp_system;
         const auto second_path = second_output.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(second_output);
         const auto same_file = [](const auto& a, const auto& b) {
             if (a == b) return true;
@@ -423,6 +455,20 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         } else if (language == "octave") {
             const auto octave = generate_octave(module, name, skip, policy);
             generated = {octave.source, octave.diagnostics};
+        } else if (julia_full) {
+            JuliaFullOptions options;
+            options.parts = python_parts;
+            options.package = julia_package;
+            options.library = julia_library;
+            const auto julia = generate_julia_full(module, name, skip, policy, options);
+            generated = {julia.source, julia.diagnostics};
+            for (std::size_t i = 0; i < julia.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, julia.parts[i]);
+            }
+            language_interface = julia.interface;
+            second_interface = julia.project;
         } else if (language == "julia") {
             const auto julia = generate_julia(module, name, skip, policy);
             generated = {julia.source, julia.diagnostics};
@@ -456,6 +502,21 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             const auto fortran = generate_fortran(module, name, skip, policy);
             generated = {fortran.source, fortran.diagnostics};
             language_interface = fortran.interface;
+        } else if (csharp_full) {
+            CSharpFullOptions options;
+            options.parts = python_parts;
+            options.managed_namespace = csharp_namespace;
+            options.library = csharp_library;
+            options.functions_class = csharp_functions;
+            const auto csharp = generate_csharp_full(module, name, skip, policy, options);
+            generated = {csharp.source, csharp.diagnostics};
+            for (std::size_t i = 0; i < csharp.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, csharp.parts[i]);
+            }
+            language_interface = csharp.interface;
+            second_interface = csharp.project;
         } else if (language == "csharp") {
             const auto csharp = generate_csharp(module, name, skip, policy, csharp_namespace);
             generated = {csharp.source, csharp.diagnostics};

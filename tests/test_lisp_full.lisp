@@ -243,6 +243,6 @@
 (check (and (= (ft.data:scaled 3) 6) (= (ft.data:scaled 2.5d0) 6.25d0)) "submodule overloads")
 (check (and (equal (ft.data:repeat "ab") "abab") (equal (ft:repeat "x" 3) "xxx")) "submodule names are separate")
 (check (not (eq (nth-value 1 (find-symbol "SCALED" "FEATURES")) :external)) "nothing leaks to the main package")
-(check (search "C++ `features::data::unit`" (or (documentation 'ft.data:unit 'function) "")) "submodule docs")
+(check (search "Mapped by the policy's modules" (or (documentation 'ft.data:unit 'function) "")) "submodule docs")
 (gc)
 (format t "Common Lisp full API passed (~D checks)~%" *checks*)

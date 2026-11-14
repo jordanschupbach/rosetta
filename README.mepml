@@ -478,6 +478,29 @@ set_target_properties(library PROPERTIES PREFIX "")
 
 The helper supports compiler/database, policy, IR and dependency options, and tracks both generated files. Enable `ROSETTA_BUILD_JULIA_EXAMPLES` for the repository modules. R-only CLI options are rejected. Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Automatic enums, containers/arrays, overloads, callbacks, class-valued/borrowed inputs/results, inheritance and Julia indexing/operator/iteration/async protocols remain open. The [Julia verification matrix|docs/roadmap.md#julia-verification] separates direct mappings from named native facades.
 
+
+>>> Full Julia API
+
+`--language julia --julia-api full` generates a library-shaped Julia module (the same planning as the Python, R6, full Lua and full Common Lisp backends) instead of the minimal interface above:
+
+```{sh, eval=false}
+rosetta api.hpp --language julia --julia-api full --module library --policy api.policy.json \
+  -o generated/library.cpp --julia-output generated/src/Library.jl --julia-project generated/Project.toml --parts 4
+clang++ -std=c++17 -shared -fPIC generated/library*.cpp -o generated/src/library.so
+julia --project=generated -e 'using Library'
+```
+
+- Each C\+\+ class is an abstract type with the C\+\+ name (`abstract type Circle <: Shape end`, with a hidden concrete storage type), so `c isa Shape` holds and methods dispatch on it. `Circle(2)` constructs; methods are generic functions taking the object first (`area(c)`), fields are properties (`s.side = 3`), static methods take the type (`unit(Circle)`), and overloads are resolved at run time in C\+\+.
+- Names keep their C\+\+ spelling (`twice_area`, `ns::f` → `ns__f`); keywords get a trailing `_`. A name Base also exports is never exported: when all its methods take one of the module's classes they extend the Base function (`size(canvas)`, `first(segment)`), otherwise it stays a module function (`Library.repeat`).
+- C\+\+ operators extend `+ - * / rem == < <= > >= & | xor ~ getindex`, and `operator()` makes objects callable. `show` uses `to_string`. `close(obj)` releases a native object early; otherwise finalizers do.
+- Vectors are `Vector`s (tuples are accepted), maps are `Dict`s, pairs and tuples are tuples, enums are `Symbol`s (the enum name is the tuple of its Symbols, so `:circle in Kind`), `std::function` takes any callable, and a mutable reference parameter takes a `Ref` that is updated in place.
+- Virtual classes can be subclassed: `@subclass mutable struct Triangle <: Shape; base::Float64; end` and `Library.area(t::Triangle) = ...`. C\+\+ calls the Julia method; `supercall(f, self, args...)` calls the native one. Pass C\+\+ constructor arguments with `Triangle(4.0; args = (…,))`.
+- C\+\+ exceptions are thrown as `NativeError` with a `kind` Symbol (`:invalid_argument`, `:out_of_range`, ...). A Julia exception thrown in a callback crosses C\+\+ and is rethrown unchanged.
+- Docstrings are Julia Markdown: the indented signatures with types and defaults, the C\+\+ documentation, `# Arguments`, `# Returns` and `# Throws`. `?area` in the REPL and editors (mep's Julia LSP) show them.
+- `--julia-package NAME` names the module (default: the module name capitalized), `--julia-project PATH` writes a `Project.toml`. The library is found beside the `.jl` file (or in `../deps`, `../lib`), or through the `MODULE_JULIA_LIBRARY` environment variable. In CMake, use `rosetta_generate_julia(... JULIA_API full JULIA_PROJECT ... PARTS N)`.
+
+`tests/test_julia_full.jl` (ctest `julia_full_features`) exercises all of this on `examples/python_features.hpp`; datamunge's Julia bindings use it.
+
 >> Java
 
 Select Java with `--language java`. The generator writes a JNI C++ bridge and a
@@ -670,6 +693,28 @@ The helper supports compiler/database, policy, IR and dependency options and
 tracks both outputs. Enable `ROSETTA_BUILD_CSHARP_EXAMPLES` for the repository
 examples, including the .NET build. C# output/namespace options are rejected for
 other backends.
+
+
+>>> Full C# API
+
+`--language csharp --csharp-api full` generates a library-shaped C# API (the same planning as the full Julia backend, through the shared C ABI planner in `src/cabi_full.cpp`) instead of the minimal interface above:
+
+```{sh, eval=false}
+rosetta api.hpp --language csharp --csharp-api full --module library --policy api.policy.json \
+  -o generated/library.cpp --csharp-output generated/Library.cs --csharp-project generated/Library.csproj --parts 4
+clang++ -std=c++17 -shared -fPIC generated/library*.cpp -o generated/liblibrary.so
+dotnet build generated/Library.csproj
+```
+
+- Every C\+\+ class becomes a C# class deriving `NativeObject` (`IDisposable`, finalizers release abandoned objects), and C\+\+ inheritance is C# inheritance; a secondary base converts implicitly. Abstract classes and protected constructors become protected C# constructors. Names are PascalCase (`TwiceArea`, fields become properties), the namespace defaults to the module name in PascalCase (`--csharp-namespace` changes it), and module functions live in the static class `Functions` (`--csharp-functions`), with policy submodules as nested static classes.
+- Overloads are resolved at run time in C\+\+; default arguments become one overload per arity. Virtual C\+\+ methods are `virtual`, and a C# subclass overrides them: C\+\+ calls the C# override, and `base.Area()` calls the native one.
+- C\+\+ operators become C# operators (comparison partners are synthesized), `operator[]` an indexer, `operator()` `Invoke`, and `to_string()` overrides `ToString()`.
+- Vectors take any `IEnumerable<T>` and return `List<T>`, sets `HashSet<T>`, maps `Dictionary` (parameters take `IReadOnlyDictionary`), pairs and tuples C# tuples, `optional` and pointers nullable types, complex numbers `System.Numerics.Complex`, `std::function` `Func`/`Action`, mutable references `ref`. Enums are `enum : long` with the C\+\+ labels.
+- C\+\+ exceptions are thrown as `NativeException` with a `Kind` (`"invalid_argument"`, `"out_of_range"`, ...). A C# exception thrown in a callback or override crosses C\+\+ and is rethrown unchanged.
+- Doxygen becomes XML documentation comments (`<summary>`, `<remarks>`, `<param>`, `<returns>`, `<exception>`); the generated project sets `GenerateDocumentationFile`, so IDEs and mep's C# LSP show them.
+- `--csharp-project PATH` writes a .NET 10 `.csproj`; `--csharp-library NAME` names the native library. It is found through the `MODULE_CSHARP_LIBRARY` environment variable, beside the application or assembly, or in `lib/` or `../lib`. In CMake, use `rosetta_generate_csharp(... CSHARP_API full CSHARP_PROJECT ... PARTS N)`.
+
+`tests/TestCSharpFull.cs` (ctest `csharp_full_features`) exercises all of this on `examples/python_features.hpp`; datamunge's C# bindings use it.
 
 >> Fortran
 

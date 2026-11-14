@@ -78,5 +78,56 @@ if(ROSETTA_BUILD_CSHARP_EXAMPLES)
             set_tests_properties(csharp_${family} PROPERTIES TIMEOUT 30)
         endforeach()
         add_test(NAME csharp_example COMMAND "${ROSETTA_DOTNET_EXECUTABLE}" "${csharp_output}/CSharpExample.dll")
+        # The full C# API (--csharp-api full) on the example shared with Python, Lua, Lisp and Julia.
+        set(csharp_full "${csharp_generated}/full")
+        rosetta_generate_csharp(HEADER "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.hpp" MODULE features
+            CLANG "${ROSETTA_CLANG_EXECUTABLE}" OUTPUT "${csharp_full}/features.cpp"
+            CSHARP_OUTPUT "${csharp_full}/Features.cs" CSHARP_PROJECT "${csharp_full}/Features.csproj"
+            POLICY "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.policy.json"
+            CSHARP_API full PARTS 2)
+        add_library(rosetta_csharp_full_features MODULE "${csharp_full}/features.cpp" "${csharp_full}/features_1.cpp")
+        target_compile_features(rosetta_csharp_full_features PRIVATE cxx_std_17)
+        target_include_directories(rosetta_csharp_full_features PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+        set_target_properties(rosetta_csharp_full_features PROPERTIES PREFIX "" OUTPUT_NAME features
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/csharp-full")
+        set(full_project "${csharp_full}/TestCSharpFull.csproj")
+        file(WRITE "${full_project}" "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><EnableDefaultCompileItems>false</EnableDefaultCompileItems><Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup><ItemGroup><Compile Include=\"${csharp_full}/Features.cs\" /><Compile Include=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/TestCSharpFull.cs\" /></ItemGroup></Project>\n")
+        add_custom_command(OUTPUT "${csharp_output}/full/TestCSharpFull.dll"
+            COMMAND "${CMAKE_COMMAND}" -E env "DOTNET_CLI_HOME=${CMAKE_CURRENT_BINARY_DIR}/dotnet-home"
+                DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+                "${ROSETTA_DOTNET_EXECUTABLE}" build "${full_project}" --configuration Release --output "${csharp_output}/full"
+                --nologo --disable-build-servers "-p:BaseIntermediateOutputPath=${csharp_generated}/obj/full/"
+                --configfile "${csharp_generated}/NuGet.Config"
+            DEPENDS "${full_project}" "${csharp_full}/Features.cs" "${CMAKE_CURRENT_SOURCE_DIR}/tests/TestCSharpFull.cs" "${csharp_generated}/NuGet.Config"
+            VERBATIM)
+        add_custom_target(rosetta_csharp_TestCSharpFull ALL DEPENDS "${csharp_output}/full/TestCSharpFull.dll" rosetta_csharp_full_features)
+        add_test(NAME csharp_full_features COMMAND "${ROSETTA_DOTNET_EXECUTABLE}" "${csharp_output}/full/TestCSharpFull.dll" "${csharp_full}/Features.cs")
+        set_tests_properties(csharp_full_features PROPERTIES TIMEOUT 120
+            ENVIRONMENT "FEATURES_CSHARP_LIBRARY=$<TARGET_FILE:rosetta_csharp_full_features>")
+
+        # Classes named like the .NET types generated code uses (Complex, List, Func, ...).
+        rosetta_generate_csharp(HEADER "${CMAKE_CURRENT_SOURCE_DIR}/tests/csharp_full_names.hpp" MODULE shadow
+            CLANG "${ROSETTA_CLANG_EXECUTABLE}" OUTPUT "${csharp_full}/shadow.cpp"
+            CSHARP_OUTPUT "${csharp_full}/Shadow.cs" CSHARP_API full
+            POLICY "${CMAKE_CURRENT_SOURCE_DIR}/tests/csharp_full_names.policy.json")
+        add_library(rosetta_csharp_full_names MODULE "${csharp_full}/shadow.cpp")
+        target_compile_features(rosetta_csharp_full_names PRIVATE cxx_std_17)
+        target_include_directories(rosetta_csharp_full_names PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        set_target_properties(rosetta_csharp_full_names PROPERTIES PREFIX "" OUTPUT_NAME shadow
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/csharp-full")
+        set(names_project "${csharp_full}/TestCSharpNames.csproj")
+        file(WRITE "${names_project}" "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><EnableDefaultCompileItems>false</EnableDefaultCompileItems><Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors></PropertyGroup><ItemGroup><Compile Include=\"${csharp_full}/Shadow.cs\" /><Compile Include=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/TestCSharpNames.cs\" /></ItemGroup></Project>\n")
+        add_custom_command(OUTPUT "${csharp_output}/names/TestCSharpNames.dll"
+            COMMAND "${CMAKE_COMMAND}" -E env "DOTNET_CLI_HOME=${CMAKE_CURRENT_BINARY_DIR}/dotnet-home"
+                DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+                "${ROSETTA_DOTNET_EXECUTABLE}" build "${names_project}" --configuration Release --output "${csharp_output}/names"
+                --nologo --disable-build-servers "-p:BaseIntermediateOutputPath=${csharp_generated}/obj/names/"
+                --configfile "${csharp_generated}/NuGet.Config"
+            DEPENDS "${names_project}" "${csharp_full}/Shadow.cs" "${CMAKE_CURRENT_SOURCE_DIR}/tests/TestCSharpNames.cs" "${csharp_generated}/NuGet.Config"
+            VERBATIM)
+        add_custom_target(rosetta_csharp_TestCSharpNames ALL DEPENDS "${csharp_output}/names/TestCSharpNames.dll" rosetta_csharp_full_names)
+        add_test(NAME csharp_full_names COMMAND "${ROSETTA_DOTNET_EXECUTABLE}" "${csharp_output}/names/TestCSharpNames.dll")
+        set_tests_properties(csharp_full_names PROPERTIES TIMEOUT 120
+            ENVIRONMENT "SHADOW_CSHARP_LIBRARY=$<TARGET_FILE:rosetta_csharp_full_names>")
     endif()
 endif()

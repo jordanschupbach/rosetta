@@ -47,5 +47,20 @@ if(ROSETTA_BUILD_JULIA_EXAMPLES)
             set_tests_properties(julia_${family} PROPERTIES
                 ENVIRONMENT "JULIA_DEPOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/julia-depot" TIMEOUT 45)
         endforeach()
+        # The full Julia API (--julia-api full) on the example shared with Python, Lua and Lisp.
+        rosetta_generate_julia(HEADER "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.hpp" MODULE features
+            CLANG "${ROSETTA_CLANG_EXECUTABLE}" OUTPUT "${julia_generated}/full/features.cpp"
+            JULIA_OUTPUT "${julia_generated}/full/Features.jl" JULIA_PROJECT "${julia_generated}/full/Project.toml"
+            POLICY "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.policy.json"
+            JULIA_API full PARTS 2)
+        add_library(rosetta_julia_full_features MODULE "${julia_generated}/full/features.cpp" "${julia_generated}/full/features_1.cpp")
+        target_compile_features(rosetta_julia_full_features PRIVATE cxx_std_17)
+        target_include_directories(rosetta_julia_full_features PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+        set_target_properties(rosetta_julia_full_features PROPERTIES PREFIX "" OUTPUT_NAME features
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/julia-full")
+        add_test(NAME julia_full_features COMMAND ${julia_command} --threads=2
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_julia_full.jl" "${julia_generated}/full/Features.jl")
+        set_tests_properties(julia_full_features PROPERTIES TIMEOUT 300
+            ENVIRONMENT "JULIA_DEPOT_PATH=${CMAKE_CURRENT_BINARY_DIR}/julia-depot;FEATURES_JULIA_LIBRARY=$<TARGET_FILE:rosetta_julia_full_features>")
     endif()
 endif()

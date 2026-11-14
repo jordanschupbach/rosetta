@@ -37,6 +37,9 @@ add_library(rosetta_core
     src/ruby.cpp
     src/octave.cpp
     src/julia.cpp
+    src/julia_full.cpp
+    src/cabi_full.cpp
+    src/csharp_full.cpp
     src/fortran.cpp
     src/csharp.cpp
     src/java.cpp
