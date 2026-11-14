@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "select": "all",
+  "names": "flat",
+  "exclude": ["hash", "shadow::detail::StringValue"],
+  "convert": { "shadow::Samples": "std::vector<double>" },
+  "modules": { "shadow::stats": "stats" },
+  "enums": { "shadow::Permission": { "flags": ["read", "write", "execute"] } },
+  "exceptions": [ { "match": "shadow::lookup", "map": [ ["std::out_of_range", "KeyError"] ] } ]
+}

@@ -59,5 +59,33 @@ if(ROSETTA_BUILD_OCTAVE_EXAMPLES)
                 "$<TARGET_FILE_DIR:rosetta_octave_demo>" "${CMAKE_CURRENT_SOURCE_DIR}/examples/repl.m")
         endforeach()
         set_tests_properties(octave_features PROPERTIES TIMEOUT 20)
+        # The full API (--octave-api full): python_features.hpp (split in two sources) and the names
+        # test, each an oct-file __NAME__.oct beside its package folder +NAME.
+        set(octave_full "${octave_generated}/full")
+        rosetta_generate_octave(HEADER "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.hpp"
+            MODULE features OUTPUT "${octave_full}/features/features.cpp" OCTAVE_API full PARTS 2
+            CLANG "${ROSETTA_CLANG_EXECUTABLE}" POLICY "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.policy.json")
+        add_library(rosetta_octave_full_features MODULE "${octave_full}/features/features.cpp" "${octave_full}/features/features_1.cpp")
+        target_include_directories(rosetta_octave_full_features PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+        rosetta_generate_octave(HEADER "${CMAKE_CURRENT_SOURCE_DIR}/tests/octave_full_names.hpp"
+            MODULE names OUTPUT "${octave_full}/names/names.cpp" OCTAVE_API full
+            CLANG "${ROSETTA_CLANG_EXECUTABLE}" POLICY "${CMAKE_CURRENT_SOURCE_DIR}/tests/octave_full_names.policy.json")
+        add_library(rosetta_octave_full_names MODULE "${octave_full}/names/names.cpp")
+        target_include_directories(rosetta_octave_full_names PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        foreach(example features names)
+            set_target_properties(rosetta_octave_full_${example} PROPERTIES PREFIX "" OUTPUT_NAME __${example}__ SUFFIX ".oct"
+                LIBRARY_OUTPUT_DIRECTORY "${octave_full}/${example}")
+            target_include_directories(rosetta_octave_full_${example} SYSTEM PRIVATE "${octave_OCTINCLUDEDIR}" "${octave_include_parent}")
+            target_link_libraries(rosetta_octave_full_${example} PRIVATE "${ROSETTA_OCTINTERP_LIBRARY}" "${ROSETTA_OCTAVE_LIBRARY}")
+            target_compile_features(rosetta_octave_full_${example} PRIVATE cxx_std_17)
+            rosetta_warnings(rosetta_octave_full_${example})
+        endforeach()
+        foreach(family features help)
+            add_test(NAME octave_full_${family} COMMAND ${octave_command} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_octave_full.m"
+                ${family} "${octave_full}/features" "${CMAKE_CURRENT_SOURCE_DIR}/tests/octave_full")
+        endforeach()
+        add_test(NAME octave_full_names COMMAND ${octave_command} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_octave_full_names.m"
+            "${octave_full}/names")
+        set_tests_properties(octave_full_features octave_full_help octave_full_names PROPERTIES TIMEOUT 120)
     endif()
 endif()

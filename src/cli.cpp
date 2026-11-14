@@ -26,6 +26,7 @@
 #include <set>
 #include <charconv>
 #include <optional>
+#include <sstream>
 
 namespace rosetta {
 namespace {
@@ -44,11 +45,30 @@ Generate native language bindings from a C++ header.
   --julia-project PATH  Also write a Project.toml for the package (--julia-api full)
   --lisp-output PATH    Generated Common Lisp interface (default: OUTPUT with extension .lisp)
   --guile-output PATH   Generated Guile module (default: MODULE.scm beside OUTPUT)
+  --guile-api minimal|full Guile binding style (default: minimal); full builds a libguile extension
+                        with GOOPS classes, generic methods, Scheme subclass directors, containers,
+                        callbacks, exception keys and docstrings from the C++ documentation
+  --guile-module NAME   Guile module (--guile-api full; default: (MODULE); may be "a b")
+  --guile-extension NAME Library load-extension opens (--guile-api full; default: libMODULE_guile)
   --ocaml-output PATH   Generated OCaml module (default: MODULE.ml beside OUTPUT)
+  --ocaml-api minimal|full OCaml binding style (default: minimal); full writes MODULE.ml, MODULE.mli
+                        (odoc documentation) and a findlib META beside it: a submodule per class,
+                        overloads, optional arguments, callbacks, OCaml subclasses (directors) and
+                        exceptions over the shared C ABI library (OUTPUT, with its C stubs)
   --go-output PATH      Generated Go package file (default: MODULE.go beside OUTPUT)
+  --go-api minimal|full Go binding style (default: minimal); full writes a cgo module (go.mod, the
+                        package file, internal/rosetta, a subpackage per policy module) over a
+                        shared C ABI library: classes with embedding and XLike interfaces, errors,
+                        overloads, containers, callbacks, Go implementations of virtual methods, godoc
+  --go-package NAME     Go package name (--go-api full; default: MODULE)
+  --go-module-path PATH go.mod module path (--go-api full; default: the package name)
+  --go-library NAME     Shared library cgo links as -lNAME (--go-api full; default: MODULE)
   --gnu-apl-output PATH GNU APL script (default: MODULE.apl beside OUTPUT)
   --dyalog-output PATH  Dyalog APL namespace script (default: MODULE.apln beside OUTPUT)
   --apl-library-dir DIR Directory the APL scripts load their libraries from (default: .)
+  --apl-api minimal|full APL binding style (default: minimal); full builds one GNU APL native
+                        function library (libMODULE_gnu_apl.so) and a GNU APL script of PREFIX∆ functions
+  --apl-prefix NAME     Name prefix of the APL functions (--apl-api full; default: MODULE)
   --cobol-output PATH   Generated COBOL copybook (default: MODULE.cpy beside OUTPUT)
   --cobol-string-size N Byte capacity of COBOL string fields (default: 256)
   --cobol-api API       minimal (default) or full: handles, containers, overloads, callbacks, overrides, docs
@@ -58,6 +78,31 @@ Generate native language bindings from a C++ header.
   --cobol-result-size N Full API: bytes of string results (default: the string size)
   --java-output PATH    Generated Java interface (default: MODULE.java beside OUTPUT)
   --fortran-output PATH Generated Fortran interface (default: MODULE.f90 beside OUTPUT)
+  --fortran-api minimal|full Fortran binding style (default: minimal); full binds classes as derived
+                        types with type-bound procedures and inheritance, overloads as generic
+                        interfaces, containers, callbacks, extensible classes and FORD doc comments
+  --fortran-module NAME Fortran module name (--fortran-api full; default: MODULE)
+  --ruby-api minimal|full Ruby binding style (default: minimal); full builds an MRI native extension
+                        with classes, inheritance, Ruby subclasses of virtual classes, keyword
+                        arguments, blocks, operators, containers and a YARD documentation file
+  --ruby-module NAME    Ruby module (--ruby-api full; default: MODULE in CamelCase; may be A::B)
+  --ruby-output PATH    Generated YARD-documented Ruby file (--ruby-api full; default: MODULE.rb beside OUTPUT)
+  --ruby-native PATH    require_relative path of the extension from the Ruby file, whose basename
+                        names Init_<basename> (--ruby-api full; default: MODULE/MODULE)
+  --tcl-api minimal|full Tcl binding style (default: minimal); full builds a stubs-enabled Tcl 8.6/9
+                        extension with TclOO classes, inheritance, Tcl subclasses of virtual
+                        classes, overloads, containers, callbacks and a documented package file
+  --tcl-namespace NS    Tcl namespace of the commands (--tcl-api full; default: MODULE; may be a::b)
+  --tcl-output PATH     Generated package file (--tcl-api full; default: MODULE.tcl beside OUTPUT)
+  --tcl-pkgindex PATH   Generated pkgIndex.tcl (--tcl-api full; default: beside --tcl-output)
+  --tcl-library NAME    Basename of the shared library the package loads (--tcl-api full; default: MODULE)
+  --tcl-version V       Package version (--tcl-api full; default: 1.0)
+  --octave-api minimal|full Octave binding style (default: minimal); full builds one native oct-file
+                        (__MODULE__.oct) and a package of .m files: classdef handle classes with
+                        inheritance, Octave subclasses of virtual classes, properties, operators,
+                        containers, callbacks and help text for help/doc
+  --octave-output DIR   Directory of the +PACKAGE folder (--octave-api full; default: OUTPUT's directory)
+  --octave-package NAME Octave package (--octave-api full; default: MODULE)
   --csharp-output PATH Generated C# interface (default: MODULE.cs beside OUTPUT)
   --csharp-namespace NAME C# namespace (default: global namespace; --csharp-api full: MODULE in PascalCase)
   --csharp-api minimal|full C# binding style (default: minimal); full binds classes with inheritance,
@@ -66,7 +111,11 @@ Generate native language bindings from a C++ header.
   --csharp-library NAME Shared library base name the C# side loads (--csharp-api full)
   --csharp-project PATH Also write a .csproj for the interface (--csharp-api full)
   --csharp-functions NAME Static class of the module functions (--csharp-api full; default: Functions)
-  --java-package NAME   Java package (default: unnamed package)
+  --java-package NAME   Java package (default: unnamed package; --java-api full: MODULE)
+  --java-api minimal|full Java binding style (default: minimal); full binds classes with inheritance,
+                         overrides, containers, callbacks and Javadoc; --java-output is then the
+                         source root (default: OUTPUT's directory), PACKAGE/package-info.java the declared output
+  --java-library NAME   JNI library base name for System.loadLibrary (--java-api full; default: MODULE)
   --clang PATH           Clang executable (default: clang++)
   --dump-ir PATH         Export the normalized declaration model as JSON
   --depfile PATH         Export compiler-discovered inputs as a Make/Ninja depfile
@@ -104,11 +153,13 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         std::string header, name, output, dump_ir, depfile, policy_path, clang = "clang++";
         std::string database_path, translation_unit, include_as;
         std::size_t python_parts = 1;
-        std::string language = "lua", object_system, r_output, julia_output, java_output, java_package, csharp_output, csharp_namespace, fortran_output, lisp_output, guile_output, ocaml_output, go_output, gnu_apl_output, dyalog_output, apl_library_dir, cobol_output, cobol_string_size, lua_api, lua_meta, lisp_api, lisp_system, lisp_nicknames, lisp_library, julia_api, julia_package, julia_library, julia_project, csharp_api, csharp_library, csharp_project, csharp_functions, cobol_api, cobol_prefix, cobol_callbacks, cobol_table_size, cobol_result_size, js_types;
+        std::string language = "lua", object_system, r_output, julia_output, java_output, java_package, java_api, java_library, csharp_output, csharp_namespace, fortran_output, lisp_output, guile_output, ocaml_output, ocaml_api, go_output, go_api, go_package, go_module_path, go_library, gnu_apl_output, dyalog_output, apl_library_dir, cobol_output, cobol_string_size, lua_api, lua_meta, lisp_api, lisp_system, lisp_nicknames, lisp_library, julia_api, julia_package, julia_library, julia_project, csharp_api, csharp_library, csharp_project, csharp_functions, fortran_api, fortran_module, ruby_api, ruby_module, ruby_output, ruby_native, guile_api, guile_module, guile_extension, tcl_api, tcl_namespace, tcl_output, tcl_pkgindex, tcl_library, tcl_version, cobol_api, cobol_prefix, cobol_callbacks, cobol_table_size, cobol_result_size, js_types;
         std::optional<std::size_t> command_index;
         std::vector<std::string> extra_flags;
         std::vector<std::filesystem::path> scopes;
         bool skip = false, skip_bodies = false, r_package = false;
+        std::string octave_api, octave_output, octave_package;
+        std::string apl_api, apl_prefix;
         for (std::size_t i = 0; i < arguments.size(); ++i) {
             const auto& arg = arguments[i];
             if (arg == "--") {
@@ -125,9 +176,21 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
                 scopes.emplace_back(arguments[i]);
                 continue;
             }
+            if (arg == "--apl-api" || arg == "--apl-prefix") {
+                if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
+                    throw BindingError("missing value for " + arg);
+                (arg == "--apl-api" ? apl_api : apl_prefix) = arguments[i];
+                continue;
+            }
+            if (arg == "--octave-api" || arg == "--octave-output" || arg == "--octave-package") {
+                if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
+                    throw BindingError("missing value for " + arg);
+                (arg == "--octave-api" ? octave_api : arg == "--octave-output" ? octave_output : octave_package) = arguments[i];
+                continue;
+            }
             if (arg == "--module" || arg == "--output" || arg == "-o" || arg == "--clang" ||
                 arg == "--dump-ir" || arg == "--depfile" || arg == "--policy" || arg == "--language" || arg == "--compile-commands" ||
-                arg == "--translation-unit" || arg == "--command-index" || arg == "--object-system" || arg == "--r-output" || arg == "--julia-output" || arg == "--java-output" || arg == "--java-package" || arg == "--csharp-output" || arg == "--csharp-namespace" || arg == "--fortran-output" || arg == "--lisp-output" || arg == "--guile-output" || arg == "--ocaml-output" || arg == "--go-output" || arg == "--gnu-apl-output" || arg == "--dyalog-output" || arg == "--apl-library-dir" || arg == "--cobol-output" || arg == "--cobol-string-size" || arg == "--cobol-api" || arg == "--cobol-prefix" || arg == "--cobol-callbacks" || arg == "--cobol-table-size" || arg == "--cobol-result-size" || arg == "--include-as" || arg == "--python-parts" || arg == "--parts" || arg == "--lua-api" || arg == "--lua-meta" || arg == "--js-types" || arg == "--lisp-api" || arg == "--lisp-system" || arg == "--lisp-nicknames" || arg == "--lisp-library" || arg == "--julia-api" || arg == "--julia-package" || arg == "--julia-library" || arg == "--julia-project" || arg == "--csharp-api" || arg == "--csharp-library" || arg == "--csharp-project" || arg == "--csharp-functions") {
+                arg == "--translation-unit" || arg == "--command-index" || arg == "--object-system" || arg == "--r-output" || arg == "--julia-output" || arg == "--java-output" || arg == "--java-package" || arg == "--java-api" || arg == "--java-library" || arg == "--csharp-output" || arg == "--csharp-namespace" || arg == "--fortran-output" || arg == "--lisp-output" || arg == "--guile-output" || arg == "--guile-api" || arg == "--guile-module" || arg == "--guile-extension" || arg == "--ocaml-output" || arg == "--ocaml-api" || arg == "--go-output" || arg == "--go-api" || arg == "--go-package" || arg == "--go-module-path" || arg == "--go-library" || arg == "--gnu-apl-output" || arg == "--dyalog-output" || arg == "--apl-library-dir" || arg == "--cobol-output" || arg == "--cobol-string-size" || arg == "--cobol-api" || arg == "--cobol-prefix" || arg == "--cobol-callbacks" || arg == "--cobol-table-size" || arg == "--cobol-result-size" || arg == "--include-as" || arg == "--python-parts" || arg == "--parts" || arg == "--lua-api" || arg == "--lua-meta" || arg == "--js-types" || arg == "--lisp-api" || arg == "--lisp-system" || arg == "--lisp-nicknames" || arg == "--lisp-library" || arg == "--julia-api" || arg == "--julia-package" || arg == "--julia-library" || arg == "--julia-project" || arg == "--csharp-api" || arg == "--csharp-library" || arg == "--csharp-project" || arg == "--csharp-functions" || arg == "--fortran-api" || arg == "--fortran-module" || arg == "--ruby-api" || arg == "--ruby-module" || arg == "--ruby-output" || arg == "--ruby-native" || arg == "--tcl-api" || arg == "--tcl-namespace" || arg == "--tcl-output" || arg == "--tcl-pkgindex" || arg == "--tcl-library" || arg == "--tcl-version") {
                 if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
                     throw BindingError("missing value for " + arg);
                 const auto& value = arguments[i];
@@ -166,11 +229,33 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
                 else if (arg == "--csharp-functions") csharp_functions = value;
                 else if (arg == "--java-output") java_output = value;
                 else if (arg == "--java-package") java_package = value;
+                else if (arg == "--java-api") java_api = value;
+                else if (arg == "--java-library") java_library = value;
                 else if (arg == "--fortran-output") fortran_output = value;
+                else if (arg == "--fortran-api") fortran_api = value;
+                else if (arg == "--fortran-module") fortran_module = value;
+                else if (arg == "--ruby-api") ruby_api = value;
+                else if (arg == "--ruby-module") ruby_module = value;
+                else if (arg == "--ruby-output") ruby_output = value;
+                else if (arg == "--ruby-native") ruby_native = value;
+                else if (arg == "--tcl-api") tcl_api = value;
+                else if (arg == "--tcl-namespace") tcl_namespace = value;
+                else if (arg == "--tcl-output") tcl_output = value;
+                else if (arg == "--tcl-pkgindex") tcl_pkgindex = value;
+                else if (arg == "--tcl-library") tcl_library = value;
+                else if (arg == "--tcl-version") tcl_version = value;
                 else if (arg == "--lisp-output") lisp_output = value;
                 else if (arg == "--guile-output") guile_output = value;
+                else if (arg == "--guile-api") guile_api = value;
+                else if (arg == "--guile-module") guile_module = value;
+                else if (arg == "--guile-extension") guile_extension = value;
                 else if (arg == "--ocaml-output") ocaml_output = value;
+                else if (arg == "--ocaml-api") ocaml_api = value;
                 else if (arg == "--go-output") go_output = value;
+                else if (arg == "--go-api") go_api = value;
+                else if (arg == "--go-package") go_package = value;
+                else if (arg == "--go-module-path") go_module_path = value;
+                else if (arg == "--go-library") go_library = value;
                 else if (arg == "--gnu-apl-output") gnu_apl_output = value;
                 else if (arg == "--dyalog-output") dyalog_output = value;
                 else if (arg == "--apl-library-dir") apl_library_dir = value;
@@ -219,18 +304,68 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             throw BindingError("--csharp-api, --csharp-library, --csharp-project and --csharp-functions require --language csharp");
         if (!csharp_api.empty() && csharp_api != "minimal" && csharp_api != "full") throw BindingError("--csharp-api must be minimal or full");
         const bool csharp_full = language == "csharp" && csharp_api == "full";
+        if (language != "java" && (!java_api.empty() || !java_library.empty())) throw BindingError("--java-api and --java-library require --language java");
+        if (!java_api.empty() && java_api != "minimal" && java_api != "full") throw BindingError("--java-api must be minimal or full");
+        const bool java_full = language == "java" && java_api == "full";
+        if (!java_full && !java_library.empty()) throw BindingError("--java-library requires --java-api full");
         if (!csharp_full && (!csharp_library.empty() || !csharp_project.empty() || !csharp_functions.empty()))
             throw BindingError("--csharp-library, --csharp-project and --csharp-functions require --csharp-api full");
         if (language != "cobol" && (!cobol_api.empty() || !cobol_prefix.empty() || !cobol_callbacks.empty() || !cobol_table_size.empty() || !cobol_result_size.empty()))
             throw BindingError("--cobol-api, --cobol-prefix, --cobol-callbacks, --cobol-table-size and --cobol-result-size require --language cobol");
         if (!cobol_api.empty() && cobol_api != "minimal" && cobol_api != "full") throw BindingError("--cobol-api must be minimal or full");
         const bool cobol_full = language == "cobol" && cobol_api == "full";
+        if (language != "fortran" && (!fortran_api.empty() || !fortran_module.empty()))
+            throw BindingError("--fortran-api and --fortran-module require --language fortran");
+        if (!fortran_api.empty() && fortran_api != "minimal" && fortran_api != "full") throw BindingError("--fortran-api must be minimal or full");
+        const bool fortran_full = language == "fortran" && fortran_api == "full";
+        if (!fortran_full && !fortran_module.empty()) throw BindingError("--fortran-module requires --fortran-api full");
+        if (language != "ocaml" && !ocaml_api.empty()) throw BindingError("--ocaml-api requires --language ocaml");
+        if (!ocaml_api.empty() && ocaml_api != "minimal" && ocaml_api != "full") throw BindingError("--ocaml-api must be minimal or full");
+        const bool ocaml_full = language == "ocaml" && ocaml_api == "full";
+        if (language != "ruby" && (!ruby_api.empty() || !ruby_module.empty() || !ruby_output.empty() || !ruby_native.empty()))
+            throw BindingError("--ruby-api, --ruby-module, --ruby-output and --ruby-native require --language ruby");
+        if (!ruby_api.empty() && ruby_api != "minimal" && ruby_api != "full") throw BindingError("--ruby-api must be minimal or full");
+        const bool ruby_full = language == "ruby" && ruby_api == "full";
+        if (language != "guile" && (!guile_api.empty() || !guile_module.empty() || !guile_extension.empty()))
+            throw BindingError("--guile-api, --guile-module and --guile-extension require --language guile");
+        if (!guile_api.empty() && guile_api != "minimal" && guile_api != "full") throw BindingError("--guile-api must be minimal or full");
+        const bool guile_full = language == "guile" && guile_api == "full";
+        if (!guile_full && (!guile_module.empty() || !guile_extension.empty()))
+            throw BindingError("--guile-module and --guile-extension require --guile-api full");
+        if (!ruby_full && (!ruby_module.empty() || !ruby_output.empty() || !ruby_native.empty()))
+            throw BindingError("--ruby-module, --ruby-output and --ruby-native require --ruby-api full");
+        if (ruby_full && ruby_output.empty()) ruby_output = (std::filesystem::path(output).parent_path() / (name + ".rb")).string();
+        if (language != "tcl" && (!tcl_api.empty() || !tcl_namespace.empty() || !tcl_output.empty() || !tcl_pkgindex.empty() || !tcl_library.empty() || !tcl_version.empty()))
+            throw BindingError("--tcl-api, --tcl-namespace, --tcl-output, --tcl-pkgindex, --tcl-library and --tcl-version require --language tcl");
+        if (!tcl_api.empty() && tcl_api != "minimal" && tcl_api != "full") throw BindingError("--tcl-api must be minimal or full");
+        const bool tcl_full = language == "tcl" && tcl_api == "full";
+        if (!tcl_full && (!tcl_namespace.empty() || !tcl_output.empty() || !tcl_pkgindex.empty() || !tcl_library.empty() || !tcl_version.empty()))
+            throw BindingError("--tcl-namespace, --tcl-output, --tcl-pkgindex, --tcl-library and --tcl-version require --tcl-api full");
+        if (tcl_full && tcl_output.empty()) tcl_output = (std::filesystem::path(output).parent_path() / (name + ".tcl")).string();
+        if (tcl_full && tcl_pkgindex.empty()) tcl_pkgindex = (std::filesystem::path(tcl_output).parent_path() / "pkgIndex.tcl").string();
+        if (tcl_full && tcl_version.empty()) tcl_version = "1.0";
+        if (language != "octave" && (!octave_api.empty() || !octave_output.empty() || !octave_package.empty()))
+            throw BindingError("--octave-api, --octave-output and --octave-package require --language octave");
+        if (!octave_api.empty() && octave_api != "minimal" && octave_api != "full") throw BindingError("--octave-api must be minimal or full");
+        const bool octave_full = language == "octave" && octave_api == "full";
+        const bool apl_full = language == "apl" && apl_api == "full";
+        if (!octave_full && (!octave_output.empty() || !octave_package.empty()))
+            throw BindingError("--octave-output and --octave-package require --octave-api full");
+        if (octave_full && octave_output.empty()) octave_output = std::filesystem::path(output).parent_path().string();
+        if (octave_full && octave_output.empty()) octave_output = ".";
+        // The package overview (+PACKAGE/Contents.m) is the declared output; the other .m files are written beside it.
+        const auto octave_contents = octave_full ? (std::filesystem::path(octave_output) / ("+" + (octave_package.empty() ? name : octave_package)) / "Contents.m").string() : std::string();
         if (!cobol_full && (!cobol_prefix.empty() || !cobol_callbacks.empty() || !cobol_table_size.empty() || !cobol_result_size.empty()))
             throw BindingError("--cobol-prefix, --cobol-callbacks, --cobol-table-size and --cobol-result-size require --cobol-api full");
         if (language != "javascript" && !js_types.empty()) throw BindingError("--js-types requires --language javascript");
         if (language == "javascript" && js_types.empty()) js_types = (std::filesystem::path(output).parent_path() / (name + ".d.ts")).string();
-        if (language != "python" && language != "javascript" && !lua_full && !lisp_full && !julia_full && !csharp_full && !cobol_full && !(language == "r" && object_system != "s3" && object_system != "s4") && python_parts != 1)
-            throw BindingError("--parts requires --language python, javascript, r (R6), lua (--lua-api full), common-lisp (--lisp-api full), julia (--julia-api full), csharp (--csharp-api full) or cobol (--cobol-api full)");
+        if (language != "go" && !go_api.empty()) throw BindingError("--go-api requires --language go");
+        if (!go_api.empty() && go_api != "minimal" && go_api != "full") throw BindingError("--go-api must be minimal or full");
+        const bool go_full = language == "go" && go_api == "full";
+        if (!go_full && (!go_package.empty() || !go_module_path.empty() || !go_library.empty()))
+            throw BindingError("--go-package, --go-module-path and --go-library require --go-api full");
+        if (language != "python" && language != "javascript" && !lua_full && !lisp_full && !julia_full && !csharp_full && !cobol_full && !fortran_full && !ruby_full && !guile_full && !octave_full && !tcl_full && !java_full && !go_full && !ocaml_full && !apl_full && !(language == "r" && object_system != "s3" && object_system != "s4") && python_parts != 1)
+            throw BindingError("--parts requires --language python, javascript, r (R6), lua (--lua-api full), common-lisp (--lisp-api full), julia (--julia-api full), csharp (--csharp-api full), fortran (--fortran-api full), ruby (--ruby-api full), guile (--guile-api full), octave (--octave-api full), tcl (--tcl-api full), java (--java-api full), go (--go-api full), ocaml (--ocaml-api full), apl (--apl-api full) or cobol (--cobol-api full)");
         if (r_package && (language != "r" || object_system == "s3" || object_system == "s4"))
             throw BindingError("--r-package requires --language r with the R6 object system");
         if (language != "r" && (!object_system.empty() || !r_output.empty()))
@@ -257,10 +392,17 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         if (language != "guile" && !guile_output.empty())
             throw BindingError("--guile-output requires --language guile");
         if (language == "guile") {
-            if (guile_output.empty()) guile_output = (std::filesystem::path(output).parent_path() / (name + ".scm")).string();
-            // (use-modules (NAME)) loads NAME.scm.
-            if (std::filesystem::path(guile_output).filename() != name + ".scm")
-                throw BindingError("Guile module filename must match the module name: " + name + ".scm");
+            // (use-modules (a b)) loads a/b.scm: the file is named after the last part of the module.
+            std::string guile_file = name;
+            if (guile_full && !guile_module.empty()) {
+                std::string text = guile_module;
+                for (auto& c : text) if (c == '(' || c == ')' || c == '.' || c == '/') c = ' ';
+                std::istringstream parts(text);
+                for (std::string part; parts >> part;) guile_file = part;
+            }
+            if (guile_output.empty()) guile_output = (std::filesystem::path(output).parent_path() / (guile_file + ".scm")).string();
+            if (std::filesystem::path(guile_output).filename() != guile_file + ".scm")
+                throw BindingError("Guile module filename must match the module name: " + guile_file + ".scm");
         }
         if (language != "go" && !go_output.empty()) throw BindingError("--go-output requires --language go");
         if (language == "go" && go_output.empty()) go_output = (std::filesystem::path(output).parent_path() / (name + ".go")).string();
@@ -289,11 +431,16 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         }
         if (cobol_full && cobol_callbacks.empty())
             cobol_callbacks = (std::filesystem::path(cobol_output).parent_path() / (std::filesystem::path(cobol_output).stem().string() + "-callbacks.cpy")).string();
+        if (language != "apl" && (!apl_api.empty() || !apl_prefix.empty())) throw BindingError("--apl-api and --apl-prefix require --language apl");
+        if (!apl_api.empty() && apl_api != "minimal" && apl_api != "full") throw BindingError("--apl-api must be minimal or full");
+        if (!apl_full && !apl_prefix.empty()) throw BindingError("--apl-prefix requires --apl-api full");
+        // The full APL API writes one GNU APL script; there is no Dyalog script.
+        if (apl_full && !dyalog_output.empty()) throw BindingError("--dyalog-output is not supported with --apl-api full (GNU APL only)");
         if (language != "apl" && (!gnu_apl_output.empty() || !dyalog_output.empty() || !apl_library_dir.empty()))
             throw BindingError("--gnu-apl-output, --dyalog-output and --apl-library-dir require --language apl");
         if (language == "apl") {
             if (gnu_apl_output.empty()) gnu_apl_output = (std::filesystem::path(output).parent_path() / (name + ".apl")).string();
-            if (dyalog_output.empty()) dyalog_output = (std::filesystem::path(output).parent_path() / (name + ".apln")).string();
+            if (dyalog_output.empty() && !apl_full) dyalog_output = (std::filesystem::path(output).parent_path() / (name + ".apln")).string();
             if (apl_library_dir.empty()) apl_library_dir = ".";
         }
         if (language != "ocaml" && !ocaml_output.empty())
@@ -305,7 +452,16 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
                 throw BindingError("OCaml module filename must match the module name: " + name + ".ml");
         }
         if (language != "java" && (!java_output.empty() || !java_package.empty())) throw BindingError("--java-output and --java-package require --language java");
-        if (language == "java") {
+        // The full Java API writes a source tree: --java-output is its root, and the package's
+        // package-info.java the declared output (the other .java files are written beside it).
+        std::string java_package_info;
+        if (java_full) {
+            if (java_output.empty()) java_output = std::filesystem::path(output).parent_path().string();
+            if (java_output.empty()) java_output = ".";
+            std::string package_path = java_package.empty() ? name : java_package;
+            for (auto& c : package_path) if (c == '.') c = '/';
+            java_package_info = (std::filesystem::path(java_output) / package_path / "package-info.java").string();
+        } else if (language == "java") {
             if (java_output.empty()) java_output = (std::filesystem::path(output).parent_path() / (name + ".java")).string();
             if (std::filesystem::path(java_output).filename() != name + ".java")
                 throw BindingError("Java interface filename must match the module name: " + name + ".java");
@@ -314,7 +470,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         if (language == "csharp" && csharp_output.empty()) csharp_output = (std::filesystem::path(output).parent_path() / (name + ".cs")).string();
         if (language != "fortran" && !fortran_output.empty()) throw BindingError("--fortran-output requires --language fortran");
         if (language == "fortran" && fortran_output.empty()) fortran_output = (std::filesystem::path(output).parent_path() / (name + ".f90")).string();
-        const auto interface_output = language == "javascript" ? js_types : language == "cobol" ? cobol_output : language == "apl" ? gnu_apl_output : language == "go" ? go_output : language == "ocaml" ? ocaml_output : language == "guile" ? guile_output : language == "common-lisp" ? lisp_output : language == "fortran" ? fortran_output : language == "csharp" ? csharp_output : language == "java" ? java_output : language == "julia" ? julia_output : language == "lua" ? lua_meta : r_output;
+        const auto interface_output = tcl_full ? tcl_output : octave_full ? octave_contents : language == "ruby" ? ruby_output : language == "javascript" ? js_types : language == "cobol" ? cobol_output : language == "apl" ? gnu_apl_output : language == "go" ? go_output : language == "ocaml" ? ocaml_output : language == "guile" ? guile_output : language == "common-lisp" ? lisp_output : language == "fortran" ? fortran_output : language == "csharp" ? csharp_output : java_full ? java_package_info : language == "java" ? java_output : language == "julia" ? julia_output : language == "lua" ? lua_meta : r_output;
         if (database_path.empty() && (!translation_unit.empty() || command_index))
             throw BindingError("--translation-unit and --command-index require --compile-commands");
         const auto compilation = database_path.empty() ? std::optional<CompilationCommand>{} :
@@ -325,7 +481,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         const auto dep_path = depfile.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(depfile);
         const auto interface_path = interface_output.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(interface_output);
         // APL's second script: the Dyalog namespace.
-        const auto second_output = !dyalog_output.empty() ? dyalog_output : !cobol_callbacks.empty() ? cobol_callbacks : !julia_project.empty() ? julia_project : !csharp_project.empty() ? csharp_project : lisp_system;
+        const auto second_output = !tcl_pkgindex.empty() ? tcl_pkgindex : !dyalog_output.empty() ? dyalog_output : !cobol_callbacks.empty() ? cobol_callbacks : !julia_project.empty() ? julia_project : !csharp_project.empty() ? csharp_project : lisp_system;
         const auto second_path = second_output.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(second_output);
         const auto same_file = [](const auto& a, const auto& b) {
             if (a == b) return true;
@@ -390,6 +546,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         GeneratedSource generated;
         std::vector<std::pair<std::filesystem::path, std::string>> extra_sources;
         std::string language_interface, second_interface;
+        std::vector<std::pair<std::filesystem::path, std::string>> package_files; // written, not dependency-tracked
         if (language == "r") {
             const auto system = object_system == "s3" ? RObjectSystem::s3 : object_system == "s4" ? RObjectSystem::s4 : RObjectSystem::r6;
             const auto r = generate_r(module, name, system, skip, policy, r_package, python_parts);
@@ -408,16 +565,74 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
                 path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
                 extra_sources.emplace_back(path, python.parts[i]);
             }
+        } else if (ruby_full) {
+            RubyFullOptions options;
+            options.parts = python_parts;
+            options.ruby_module = ruby_module;
+            options.native = ruby_native;
+            const auto ruby = generate_ruby_full(module, name, skip, policy, options);
+            generated = {ruby.source, ruby.diagnostics};
+            for (std::size_t i = 0; i < ruby.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, ruby.parts[i]);
+            }
+            language_interface = ruby.ruby;
         } else if (language == "ruby") {
             const auto ruby = generate_ruby(module, name, skip, policy);
             generated = {ruby.source, ruby.diagnostics};
+        } else if (tcl_full) {
+            TclFullOptions options;
+            options.parts = python_parts;
+            options.tcl_namespace = tcl_namespace;
+            options.library = tcl_library;
+            options.version = tcl_version;
+            options.tcl_file = std::filesystem::path(tcl_output).filename().string();
+            const auto tcl = generate_tcl_full(module, name, skip, policy, options);
+            generated = {tcl.source, tcl.diagnostics};
+            for (std::size_t i = 0; i < tcl.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, tcl.parts[i]);
+            }
+            language_interface = tcl.tcl;
+            second_interface = tcl.pkg_index;
         } else if (language == "tcl") {
             const auto tcl = generate_tcl(module, name, skip, policy);
             generated = {tcl.source, tcl.diagnostics};
+        } else if (guile_full) {
+            GuileFullOptions options;
+            options.parts = python_parts;
+            options.module = guile_module;
+            options.extension = guile_extension;
+            const auto guile = generate_guile_full(module, name, skip, policy, options);
+            generated = {guile.source, guile.diagnostics};
+            for (std::size_t i = 0; i < guile.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, guile.parts[i]);
+            }
+            language_interface = guile.scheme;
+            const auto directory = std::filesystem::path(guile_output).parent_path();
+            for (const auto& [relative, text] : guile.submodules) package_files.emplace_back(directory / relative, text);
         } else if (language == "guile") {
             const auto guile = generate_guile(module, name, skip, policy);
             generated = {guile.source, guile.diagnostics};
             language_interface = guile.interface;
+        } else if (ocaml_full) {
+            OcamlFullOptions options;
+            options.parts = python_parts;
+            const auto ocaml = generate_ocaml_full(module, name, skip, policy, options);
+            generated = {ocaml.source, ocaml.diagnostics};
+            for (std::size_t i = 0; i < ocaml.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, ocaml.parts[i]);
+            }
+            language_interface = ocaml.ml;
+            const auto directory = std::filesystem::path(ocaml_output).parent_path();
+            package_files.emplace_back(directory / (name + ".mli"), ocaml.mli);
+            package_files.emplace_back(directory / "META", ocaml.meta);
         } else if (language == "ocaml") {
             const auto ocaml = generate_ocaml(module, name, skip, policy);
             generated = {ocaml.source, ocaml.diagnostics};
@@ -443,15 +658,56 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             const auto cobol = generate_cobol(module, name, skip, policy, string_size);
             generated = {cobol.source, cobol.diagnostics};
             language_interface = cobol.copybook;
+        } else if (apl_full) {
+            AplFullOptions options;
+            options.parts = python_parts;
+            options.prefix = apl_prefix;
+            options.library_dir = apl_library_dir;
+            const auto apl = generate_apl_full(module, name, skip, policy, options);
+            generated = {apl.source, apl.diagnostics};
+            for (std::size_t i = 0; i < apl.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, apl.parts[i]);
+            }
+            language_interface = apl.script;
         } else if (language == "apl") {
             const auto apl = generate_apl(module, name, skip, policy, apl_library_dir);
             generated = {apl.source, apl.diagnostics};
             language_interface = apl.gnu;
             second_interface = apl.dyalog;
+        } else if (go_full) {
+            GoFullOptions options;
+            options.parts = python_parts;
+            options.package = go_package;
+            options.module_path = go_module_path;
+            options.library = go_library;
+            const auto go = generate_go_full(module, name, skip, policy, options);
+            generated = {go.source, go.diagnostics};
+            for (std::size_t i = 0; i < go.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, go.parts[i]);
+            }
+            language_interface = go.package;
+            for (const auto& [relative, text] : go.files) package_files.emplace_back(std::filesystem::path(go_output).parent_path() / relative, text);
         } else if (language == "go") {
             const auto generated_go = generate_go(module, name, skip, policy);
             generated = {generated_go.source, generated_go.diagnostics};
             language_interface = generated_go.interface;
+        } else if (octave_full) {
+            OctaveFullOptions options;
+            options.parts = python_parts;
+            options.package = octave_package;
+            const auto octave = generate_octave_full(module, name, skip, policy, options);
+            generated = {octave.source, octave.diagnostics};
+            for (std::size_t i = 0; i < octave.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, octave.parts[i]);
+            }
+            language_interface = octave.contents;
+            for (const auto& [relative, text] : octave.files) package_files.emplace_back(std::filesystem::path(octave_output) / relative, text);
         } else if (language == "octave") {
             const auto octave = generate_octave(module, name, skip, policy);
             generated = {octave.source, octave.diagnostics};
@@ -498,6 +754,18 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             const auto lisp = generate_common_lisp(module, name, skip, policy);
             generated = {lisp.source, lisp.diagnostics};
             language_interface = lisp.interface;
+        } else if (fortran_full) {
+            FortranFullOptions options;
+            options.parts = python_parts;
+            options.fortran_module = fortran_module;
+            const auto fortran = generate_fortran_full(module, name, skip, policy, options);
+            generated = {fortran.source, fortran.diagnostics};
+            for (std::size_t i = 0; i < fortran.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, fortran.parts[i]);
+            }
+            language_interface = fortran.interface;
         } else if (language == "fortran") {
             const auto fortran = generate_fortran(module, name, skip, policy);
             generated = {fortran.source, fortran.diagnostics};
@@ -521,6 +789,20 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             const auto csharp = generate_csharp(module, name, skip, policy, csharp_namespace);
             generated = {csharp.source, csharp.diagnostics};
             language_interface = csharp.interface;
+        } else if (java_full) {
+            JavaFullOptions options;
+            options.parts = python_parts;
+            options.package = java_package;
+            options.library = java_library;
+            const auto java = generate_java_full(module, name, skip, policy, options);
+            generated = {java.source, java.diagnostics};
+            for (std::size_t i = 0; i < java.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, java.parts[i]);
+            }
+            language_interface = java.package_info;
+            for (const auto& [relative, text] : java.files) package_files.emplace_back(std::filesystem::path(java_output) / relative, text);
         } else if (language == "java") {
             const auto java = generate_java(module, name, skip, policy, java_package);
             generated = {java.source, java.diagnostics};
@@ -562,6 +844,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         for (const auto& [path, source] : extra_sources) detail::write_file(path, source);
         if (!interface_path.empty()) detail::write_file(interface_path, language_interface);
         if (!second_path.empty()) detail::write_file(second_path, second_interface);
+        for (const auto& [path, text] : package_files) detail::write_file(path, text);
         if (!dump_ir.empty()) detail::write_file(ir_path, serialize_ir(module));
         if (!depfile.empty()) detail::write_file(dep_path, dependency_contents);
         for (const auto& diagnostic : generated.diagnostics) err << "warning: " << diagnostic << '\n';

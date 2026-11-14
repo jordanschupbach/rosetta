@@ -260,6 +260,9 @@
           pkgs.tcl-9_0
           pkgs.guile
           pkgs.ocaml
+          # The full OCaml API's findlib package and odoc checks (cmake/OcamlExample.cmake).
+          pkgs.ocamlPackages.findlib
+          pkgs.ocamlPackages.odoc
           pkgs.go
           rWithR6
         ]

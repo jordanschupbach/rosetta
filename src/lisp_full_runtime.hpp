@@ -17,7 +17,7 @@ namespace ROSETTA_LISP_MODULE { namespace rosetta_lisp {
 // ---------------------------------------------------------------- wording
 // The runtime is shared by the full Common Lisp and Julia backends (C ABI with one entry point);
 // messages name the values of the language on the other side. The Julia and C# generators define
-// ROSETTA_FULL_JULIA or ROSETTA_FULL_CSHARP before this runtime.
+// ROSETTA_FULL_JULIA, ROSETTA_FULL_CSHARP or ROSETTA_FULL_FORTRAN before this runtime.
 struct Words {
 #if defined(ROSETTA_FULL_JULIA)
     static constexpr const char* language = "Julia";
@@ -59,6 +59,126 @@ struct Words {
     static constexpr const char* sequence = "an array, list or other IEnumerable";
     static constexpr const char* mapping = "a dictionary";
     static constexpr const char* tuple_kind = "tuple";
+#elif defined(ROSETTA_FULL_FORTRAN)
+    static constexpr const char* language = "Fortran";
+    static constexpr const char* nil = "an unset object";
+    static constexpr const char* t = ".true.";
+    static constexpr const char* boolean = "a logical";
+    static constexpr const char* integer = "an integer";
+    static constexpr const char* real = "a real";
+    static constexpr const char* complex = "a complex";
+    static constexpr const char* string = "a character string";
+    static constexpr const char* symbol = "enumerator ";
+    static constexpr const char* bytes = "an integer(int8) array";
+    static constexpr const char* reals = "a real array";
+    static constexpr const char* list = "array";
+    static constexpr const char* cons = "pair type";
+    static constexpr const char* map = "map type";
+    static constexpr const char* function = "procedure";
+    static constexpr const char* ref = "intent(inout) argument";
+    static constexpr const char* sequence = "an array";
+    static constexpr const char* mapping = "a map type";
+    static constexpr const char* tuple_kind = "tuple type";
+#elif defined(ROSETTA_FULL_JAVA)
+    static constexpr const char* language = "Java";
+    static constexpr const char* nil = "null";
+    static constexpr const char* t = "true";
+    static constexpr const char* boolean = "a boolean";
+    static constexpr const char* integer = "an integer";
+    static constexpr const char* real = "a double";
+    static constexpr const char* complex = "a Complex";
+    static constexpr const char* string = "a String";
+    static constexpr const char* symbol = "enum ";
+    static constexpr const char* bytes = "a byte[]";
+    static constexpr const char* reals = "a double[]";
+    static constexpr const char* list = "list";
+    static constexpr const char* cons = "Map.Entry";
+    static constexpr const char* map = "Map";
+    static constexpr const char* function = "functional interface";
+    static constexpr const char* ref = "Ref argument";
+    static constexpr const char* sequence = "an array, List or other Iterable";
+    static constexpr const char* mapping = "a Map";
+    static constexpr const char* tuple_kind = "record";
+#elif defined(ROSETTA_FULL_OCTAVE)
+    static constexpr const char* language = "Octave";
+    static constexpr const char* nil = "[]";
+    static constexpr const char* t = "true";
+    static constexpr const char* boolean = "a logical";
+    static constexpr const char* integer = "an integer";
+    static constexpr const char* real = "a double";
+    static constexpr const char* complex = "a complex";
+    static constexpr const char* string = "a char row";
+    static constexpr const char* symbol = "enumerator ";
+    static constexpr const char* bytes = "a uint8 array";
+    static constexpr const char* reals = "a double array";
+    static constexpr const char* list = "cell";
+    static constexpr const char* cons = "pair";
+    static constexpr const char* map = "containers.Map";
+    static constexpr const char* function = "function handle";
+    static constexpr const char* ref = "updated argument";
+    static constexpr const char* sequence = "a vector or cell array";
+    static constexpr const char* mapping = "a containers.Map or struct";
+    static constexpr const char* tuple_kind = "cell";
+#elif defined(ROSETTA_FULL_GO)
+    static constexpr const char* language = "Go";
+    static constexpr const char* nil = "nil";
+    static constexpr const char* t = "true";
+    static constexpr const char* boolean = "a bool";
+    static constexpr const char* integer = "an integer";
+    static constexpr const char* real = "a float64";
+    static constexpr const char* complex = "a complex128";
+    static constexpr const char* string = "a string";
+    static constexpr const char* symbol = "enum ";
+    static constexpr const char* bytes = "a []byte";
+    static constexpr const char* reals = "a []float64";
+    static constexpr const char* list = "slice";
+    static constexpr const char* cons = "Pair";
+    static constexpr const char* map = "map";
+    static constexpr const char* function = "func";
+    static constexpr const char* ref = "pointer argument";
+    static constexpr const char* sequence = "a slice";
+    static constexpr const char* mapping = "a map";
+    static constexpr const char* tuple_kind = "struct";
+#elif defined(ROSETTA_FULL_OCAML)
+    static constexpr const char* language = "OCaml";
+    static constexpr const char* nil = "()";
+    static constexpr const char* t = "true";
+    static constexpr const char* boolean = "a bool";
+    static constexpr const char* integer = "an int";
+    static constexpr const char* real = "a float";
+    static constexpr const char* complex = "a Complex.t";
+    static constexpr const char* string = "a string";
+    static constexpr const char* symbol = "constructor ";
+    static constexpr const char* bytes = "bytes";
+    static constexpr const char* reals = "a float array";
+    static constexpr const char* list = "list";
+    static constexpr const char* cons = "pair";
+    static constexpr const char* map = "association list";
+    static constexpr const char* function = "function";
+    static constexpr const char* ref = "ref";
+    static constexpr const char* sequence = "a list or array";
+    static constexpr const char* mapping = "an association list";
+    static constexpr const char* tuple_kind = "tuple";
+#elif defined(ROSETTA_FULL_APL)
+    static constexpr const char* language = "APL";
+    static constexpr const char* nil = "⍬";
+    static constexpr const char* t = "1";
+    static constexpr const char* boolean = "a boolean (0 or 1)";
+    static constexpr const char* integer = "an integer";
+    static constexpr const char* real = "a number";
+    static constexpr const char* complex = "a complex number";
+    static constexpr const char* string = "a character vector";
+    static constexpr const char* symbol = "enumerator ";
+    static constexpr const char* bytes = "an integer vector";
+    static constexpr const char* reals = "a numeric vector";
+    static constexpr const char* list = "vector";
+    static constexpr const char* cons = "pair";
+    static constexpr const char* map = "2-column matrix";
+    static constexpr const char* function = "function reference";
+    static constexpr const char* ref = "updated argument";
+    static constexpr const char* sequence = "a vector";
+    static constexpr const char* mapping = "a 2-column matrix (keys, values) or a vector of pairs";
+    static constexpr const char* tuple_kind = "vector";
 #else
     static constexpr const char* language = "Lisp";
     static constexpr const char* nil = "NIL";
@@ -116,7 +236,7 @@ struct Node {
     explicit Node(Tag k) : kind(k) {}
     bool nil() const { return kind == tag_nil; }
 };
-#if defined(ROSETTA_FULL_JULIA) || defined(ROSETTA_FULL_CSHARP)
+#if defined(ROSETTA_FULL_JULIA) || defined(ROSETTA_FULL_CSHARP) || defined(ROSETTA_FULL_FORTRAN) || defined(ROSETTA_FULL_OCTAVE) || defined(ROSETTA_FULL_JAVA) || defined(ROSETTA_FULL_GO) || defined(ROSETTA_FULL_OCAML) || defined(ROSETTA_FULL_APL)
 inline Node boolean(bool value) { return Node(value ? tag_t : tag_false); }
 #else
 inline Node boolean(bool value) { return Node(value ? tag_t : tag_nil); }
@@ -490,11 +610,23 @@ inline double real_of(const Node& n) {
 }
 
 template<class T> struct Value<T, std::enable_if_t<std::is_same_v<T, bool>>> {
+#if defined(ROSETTA_FULL_APL)
+    // APL booleans are the numbers 0 and 1 (after integer overloads: lenient checks only).
+    static bool check(const Node& n, bool strict) {
+        if (n.kind == tag_t || n.kind == tag_false) return true;
+        return !strict && ((n.kind == tag_int && (n.integer == 0 || n.integer == 1)) || (n.kind == tag_real && (n.real == 0 || n.real == 1)));
+    }
+    static bool load(const Node& n) {
+        if (!check(n, false)) fail(std::string("expected ") + Words::boolean + ", got " + type_name(n));
+        return n.kind == tag_t || (n.kind == tag_int && n.integer == 1) || (n.kind == tag_real && n.real == 1);
+    }
+#else
     static bool check(const Node& n, bool) { return n.kind == tag_t || n.kind == tag_nil || n.kind == tag_false; }
     static bool load(const Node& n) {
         if (!check(n, false)) fail(std::string("expected ") + Words::boolean + ", got " + type_name(n));
         return n.kind == tag_t;
     }
+#endif
     static Node make(bool value) { return boolean(value); }
 };
 template<class T> struct Value<T, std::enable_if_t<std::is_integral_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, char>>> {
@@ -632,7 +764,10 @@ template<class T> struct Value<T, std::enable_if_t<std::is_enum_v<T>>> {
     }
     static Node make(T value) {
         const auto v = static_cast<long long>(static_cast<U>(value));
+        (void)v;
+#if !defined(ROSETTA_FULL_OCTAVE) && !defined(ROSETTA_FULL_APL) // Octave, APL: enumerators are numbers (constants of an enum class)
         for (const auto& entry : EnumTable<T>::entries) if (entry.second == v) return text_node(tag_symbol, entry.first);
+#endif
         return number(static_cast<U>(value));
     }
 };
@@ -705,9 +840,15 @@ inline Node element(const Node& n, std::size_t i) {
     if (n.kind == tag_bytes) { Node e(tag_int); e.integer = static_cast<unsigned char>(n.text[i]); return e; }
     return n.items[i];
 }
+#if defined(ROSETTA_FULL_OCTAVE) || defined(ROSETTA_FULL_APL)
+// Octave has no scalar/vector distinction (nor, for arguments, APL): a lone value is a one-element sequence (lenient checks).
+inline bool lone(const Node& n) { return !sequence(n) && !n.nil() && n.kind != tag_map && n.kind != tag_ref; }
+#else
+inline bool lone(const Node&) { return false; }
+#endif
 template<class E> bool check_elements(const Node& n, bool strict) {
     if (n.nil()) return !strict;
-    if (!sequence(n)) return false;
+    if (!sequence(n)) return !strict && lone(n) && Value<E>::check(n, false);
     if (n.kind == tag_reals) {
         if constexpr (std::is_floating_point_v<E>) return true;
         else if (!n.reals.empty()) return Value<E>::check(element(n, 0), strict) && [&] {
@@ -748,6 +889,11 @@ template<class C, class E> struct Sequence {
     static C load(const Node& n) {
         C result;
         if (n.nil()) return result;
+        if (lone(n)) {
+            if constexpr (std::is_same_v<C, std::set<E>> || std::is_same_v<C, std::unordered_set<E>>) result.insert(Value<E>::load(n));
+            else result.push_back(Value<E>::load(n));
+            return result;
+        }
         if (!sequence(n)) fail(std::string("expected ") + Words::sequence + ", got " + type_name(n));
         const auto count = length(n);
         if constexpr (std::is_same_v<C, std::vector<E>>) result.reserve(count);
@@ -765,6 +911,7 @@ template<class A> struct Value<std::vector<bool, A>> {
     static std::vector<bool, A> load(const Node& n) {
         std::vector<bool, A> result;
         if (n.nil()) return result;
+        if (lone(n)) { result.push_back(Value<bool>::load(n)); return result; }
         if (!sequence(n)) fail(std::string("expected ") + Words::sequence + ", got " + type_name(n));
         for (std::size_t i = 0; i < length(n); ++i) result.push_back(load_element<bool>(n, i));
         return result;
@@ -810,6 +957,10 @@ template<class M, class K, class V> struct Mapping {
         if (n.kind != tag_list && n.kind != tag_tuple) return false;
         for (const auto& item : n.items) {
             if (item.kind == tag_cons) { if (!each(item.items[0], item.items[1])) return false; }
+#if defined(ROSETTA_FULL_APL)
+            // APL: the rows of a 2-column matrix, or 2-item vectors.
+            else if ((item.kind == tag_list || item.kind == tag_tuple) && item.items.size() == 2) { if (!each(item.items[0], item.items[1])) return false; }
+#endif
             else return false;
         }
         return true;
@@ -838,18 +989,30 @@ template<class K, class V, class H, class E, class A> struct Value<std::unordere
 // Pairs and tuples are lists ((a b)); pairs also accept conses ((a . b)).
 template<class... T> struct Product {
     static constexpr std::size_t N = sizeof...(T);
-    static const std::vector<Node>* parts(const Node& n) {
+    static const std::vector<Node>* parts(const Node& n, std::vector<Node>& scratch) {
         if (n.kind == tag_cons && N == 2) return &n.items;
         if ((n.kind == tag_list || n.kind == tag_tuple) && n.items.size() == N) return &n.items;
+#if defined(ROSETTA_FULL_APL)
+        // APL: a pair or tuple of numbers is a simple numeric vector (1.25 2.75), which arrives as reals.
+        if (n.kind == tag_reals && n.reals.size() == N) {
+            scratch.clear();
+            for (const double x : n.reals) { Node e(tag_real); e.real = x; scratch.push_back(std::move(e)); }
+            return &scratch;
+        }
+#else
+        (void)scratch;
+#endif
         return nullptr;
     }
     template<std::size_t... I> static bool check_each(const Node& n, bool strict, std::index_sequence<I...>) {
-        const auto* items = parts(n);
+        std::vector<Node> scratch;
+        const auto* items = parts(n, scratch);
         if (!items) return false;
         return (Value<T>::check((*items)[I], strict) && ...);
     }
     template<class Tuple, std::size_t... I> static Tuple load_each(const Node& n, std::index_sequence<I...>) {
-        const auto* items = parts(n);
+        std::vector<Node> scratch;
+        const auto* items = parts(n, scratch);
         if (!items) fail(std::string("expected a ") + Words::tuple_kind + " of " + std::to_string(N) + " elements, got " + type_name(n));
         return Tuple(Value<T>::load((*items)[I])...);
     }
@@ -897,7 +1060,12 @@ R"cpp(
 // A (ref value) cell: a mutable reference parameter reads its value and stores the update back.
 template<class V, class = void> struct makeable : std::false_type {};
 template<class V> struct makeable<V, std::void_t<decltype(Value<V>::make(std::declval<const V&>()))>> : std::true_type {};
+#if defined(ROSETTA_FULL_OCTAVE) || defined(ROSETTA_FULL_APL)
+// Octave (and APL) pass every argument at a position some overload updates as a ref cell.
+inline const Node& source(const Node& n, bool) { return n.kind == tag_ref ? n.items.at(0) : n; }
+#else
 inline const Node& source(const Node& n, bool out) { return out && n.kind == tag_ref ? n.items.at(0) : n; }
+#endif
 template<class P, class = void> struct Param {
     using V = std::remove_cv_t<std::remove_reference_t<P>>;
     static constexpr bool out = std::is_lvalue_reference_v<P> && !std::is_const_v<std::remove_reference_t<P>>;
@@ -1055,6 +1223,9 @@ template<class R> R invoke(int kind, unsigned long long id, unsigned generic, st
     unsigned char* out = nullptr;
     std::size_t size = 0;
     flush_output();
+#if defined(ROSETTA_FULL_OCTAVE)
+    if constexpr (std::is_void_v<R>) kind |= 0x100; // Octave calls a callback without outputs
+#endif
     const int status = Hooks::invoke(kind, id, generic, reinterpret_cast<const unsigned char*>(writer.out.data()), writer.out.size(), &out, &size);
     struct Free { unsigned char* p; ~Free() { std::free(p); } } free_out{out};
     Reader reader{out, out + size};

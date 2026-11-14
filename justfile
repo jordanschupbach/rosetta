@@ -86,7 +86,7 @@ _python-repl:
     cmake -S . -B {{build_dir}}/python-repl -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=ON -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DROSETTA_BUILD_JULIA_EXAMPLES=OFF -DROSETTA_BUILD_JAVA_EXAMPLES=OFF -DROSETTA_BUILD_FORTRAN_EXAMPLES=OFF -DROSETTA_BUILD_CSHARP_EXAMPLES=OFF -DBUILD_TESTING=OFF
     cmake --build {{build_dir}}/python-repl --parallel --target python-repl
 
-# Enter Nix and run Ruby runtime, capability, CLI and shared compiler/build tests.
+# Enter Nix and run Ruby runtime, full-API (--ruby-api full), capability, CLI and shared compiler/build tests.
 ruby-test:
     nix develop path:. --command just _ruby-test
 
@@ -189,7 +189,7 @@ _tcl-repl:
     cmake -S . -B {{build_dir}}/tcl-repl -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DROSETTA_BUILD_JULIA_EXAMPLES=OFF -DROSETTA_BUILD_JAVA_EXAMPLES=OFF -DROSETTA_BUILD_FORTRAN_EXAMPLES=OFF -DROSETTA_BUILD_CSHARP_EXAMPLES=OFF -DROSETTA_BUILD_COMMON_LISP_EXAMPLES=OFF -DROSETTA_BUILD_TCL_EXAMPLES=ON -DBUILD_TESTING=OFF
     cmake --build {{build_dir}}/tcl-repl --parallel --target tcl-repl
 
-# Enter Nix and run Guile Scheme extension runtime, capability and shared compiler/build tests.
+# Enter Nix and run Guile Scheme extension runtime (minimal and --guile-api full), capability and shared compiler/build tests.
 guile-test:
     nix develop path:. --command just _guile-test
 

@@ -58,5 +58,36 @@ if(ROSETTA_BUILD_TCL_EXAMPLES)
                 "${CMAKE_CURRENT_SOURCE_DIR}/examples/repl.tcl")
             set_tests_properties(tcl_${family} PROPERTIES TIMEOUT 45)
         endforeach()
+        # The full API (--tcl-api full): python_features.hpp (split in two sources) and the names
+        # test, each a package directory NAME/ holding pkgIndex.tcl, the documented NAME.tcl and
+        # the stubs-enabled extension it loads.
+        set(tcl_full "${tcl_generated}/full")
+        rosetta_generate_tcl(HEADER "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.hpp"
+            MODULE features OUTPUT "${tcl_full}/src/features.cpp" TCL_API full PARTS 2
+            TCL_OUTPUT "${tcl_full}/features/features.tcl"
+            CLANG "${ROSETTA_CLANG_EXECUTABLE}" POLICY "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.policy.json")
+        add_library(rosetta_tcl_full_features MODULE "${tcl_full}/src/features.cpp" "${tcl_full}/src/features_1.cpp")
+        target_include_directories(rosetta_tcl_full_features PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+        rosetta_generate_tcl(HEADER "${CMAKE_CURRENT_SOURCE_DIR}/tests/tcl_full_names.hpp"
+            MODULE names OUTPUT "${tcl_full}/src/names.cpp" TCL_API full TCL_OUTPUT "${tcl_full}/names/names.tcl"
+            CLANG "${ROSETTA_CLANG_EXECUTABLE}" POLICY "${CMAKE_CURRENT_SOURCE_DIR}/tests/tcl_full_names.policy.json")
+        add_library(rosetta_tcl_full_names MODULE "${tcl_full}/src/names.cpp")
+        target_include_directories(rosetta_tcl_full_names PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        foreach(example features names)
+            set_target_properties(rosetta_tcl_full_${example} PROPERTIES PREFIX "" OUTPUT_NAME ${example} SUFFIX "${tcl_extension}"
+                LIBRARY_OUTPUT_DIRECTORY "${tcl_full}/${example}")
+            target_compile_definitions(rosetta_tcl_full_${example} PRIVATE USE_TCL_STUBS)
+            target_include_directories(rosetta_tcl_full_${example} SYSTEM PRIVATE "${ROSETTA_TCL_INCLUDE_DIR}")
+            target_link_libraries(rosetta_tcl_full_${example} PRIVATE "${ROSETTA_TCL_STUB_LIBRARY}")
+            target_compile_features(rosetta_tcl_full_${example} PRIVATE cxx_std_17)
+            rosetta_warnings(rosetta_tcl_full_${example})
+            # Sourcing the package file directly (as pkgIndex.tcl does) loads the extension.
+            add_test(NAME tcl_full_${example}_source COMMAND "${ROSETTA_TCLSH_EXECUTABLE}" "${tcl_full}/${example}/${example}.tcl")
+        endforeach()
+        add_test(NAME tcl_full_features COMMAND "${ROSETTA_TCLSH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tcl_full.tcl"
+            "${tcl_full}/features")
+        add_test(NAME tcl_full_names COMMAND "${ROSETTA_TCLSH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tcl_full_names.tcl"
+            "${tcl_full}/names")
+        set_tests_properties(tcl_full_features tcl_full_names PROPERTIES TIMEOUT 120)
     endif()
 endif()

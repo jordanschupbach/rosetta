@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "select": "all",
+  "names": "flat",
+  "rename": {
+    "jnames::Keywords::klass": "class",
+    "jnames::Keywords::fresh": "new",
+    "jnames::Keywords::fallback": "default",
+    "jnames::Keywords::integer": "int",
+    "jnames::Keywords::klass_field": "class"
+  }
+}

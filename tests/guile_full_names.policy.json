@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "select": "all",
+  "names": "flat",
+  "modules": { "shadow::stats": "stats" },
+  "enums": { "shadow::Permission": { "flags": ["read", "write", "execute"] } },
+  "exceptions": [ { "match": "shadow::lookup", "map": [ ["std::out_of_range", "key-error"] ] } ]
+}

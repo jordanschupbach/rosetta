@@ -60,5 +60,32 @@ if(ROSETTA_BUILD_RUBY_EXAMPLES)
                 "${CMAKE_CURRENT_SOURCE_DIR}/examples/repl.rb")
         endforeach()
         set_tests_properties(ruby_features PROPERTIES TIMEOUT 20)
+        # The full API (--ruby-api full): python_features.hpp (split in two sources) and the names
+        # test, each a native extension NAME/NAME.so beside its YARD-documented NAME.rb.
+        set(ruby_full "${ruby_generated}/full")
+        rosetta_generate_ruby(HEADER "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.hpp"
+            MODULE features OUTPUT "${ruby_full}/features.cpp" RUBY_API full PARTS 2
+            CLANG "${ROSETTA_CLANG_EXECUTABLE}" POLICY "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.policy.json")
+        add_library(rosetta_ruby_full_features MODULE "${ruby_full}/features.cpp" "${ruby_full}/features_1.cpp")
+        target_include_directories(rosetta_ruby_full_features PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+        rosetta_generate_ruby(HEADER "${CMAKE_CURRENT_SOURCE_DIR}/tests/ruby_full_names.hpp"
+            MODULE names OUTPUT "${ruby_full}/names.cpp" RUBY_API full
+            CLANG "${ROSETTA_CLANG_EXECUTABLE}" POLICY "${CMAKE_CURRENT_SOURCE_DIR}/tests/ruby_full_names.policy.json")
+        add_library(rosetta_ruby_full_names MODULE "${ruby_full}/names.cpp")
+        target_include_directories(rosetta_ruby_full_names PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        foreach(example features names)
+            set_target_properties(rosetta_ruby_full_${example} PROPERTIES PREFIX "" OUTPUT_NAME ${example} SUFFIX ".${ruby_extension}"
+                LIBRARY_OUTPUT_DIRECTORY "${ruby_full}/${example}")
+            target_include_directories(rosetta_ruby_full_${example} SYSTEM PRIVATE ${Ruby_INCLUDE_DIRS})
+            target_link_libraries(rosetta_ruby_full_${example} PRIVATE ${Ruby_LIBRARIES})
+            target_compile_features(rosetta_ruby_full_${example} PRIVATE cxx_std_17)
+            rosetta_warnings(rosetta_ruby_full_${example})
+            add_test(NAME ruby_full_${example}_syntax COMMAND ${ruby_command} -c "${ruby_full}/${example}.rb")
+        endforeach()
+        add_test(NAME ruby_full_features COMMAND ${ruby_command} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_ruby_full.rb"
+            "${ruby_full}/features.rb")
+        add_test(NAME ruby_full_names COMMAND ${ruby_command} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_ruby_full_names.rb"
+            "${ruby_full}/names.rb")
+        set_tests_properties(ruby_full_features ruby_full_names PROPERTIES TIMEOUT 120)
     endif()
 endif()

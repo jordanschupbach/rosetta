@@ -78,3 +78,87 @@ if(ROSETTA_BUILD_GO_EXAMPLES)
         set_tests_properties(go_vet PROPERTIES TIMEOUT 120)
     endif()
 endif()
+
+# The full Go API (--go-api full): each package is a cgo module (NAME.go, go.mod, internal/rosetta,
+# policy subpackages) calling a shared library through the C ABI. Go builds run offline, with the
+# module cache and build cache inside the build directory.
+if(ROSETTA_BUILD_GO_EXAMPLES AND BUILD_TESTING)
+    set(go_full_dir "${CMAKE_CURRENT_BINARY_DIR}/go-full")
+    set(go_full_env "${CMAKE_COMMAND}" -E env GOWORK=off GOTOOLCHAIN=local GOFLAGS=-mod=mod GOPROXY=off
+        "GOCACHE=${go_full_dir}/cache" "GOPATH=${go_full_dir}/gopath" CGO_ENABLED=1
+        "CGO_LDFLAGS=-L${go_full_dir}/lib -Wl,-rpath,${go_full_dir}/lib")
+    set(go_full_packages)
+    foreach(example features names)
+        if(example STREQUAL "features")
+            set(module features)
+            set(header "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.hpp")
+            set(policy "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.policy.json")
+            set(program "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_go_full.go")
+            set(sources "${go_full_dir}/generated/${module}.cpp" "${go_full_dir}/generated/${module}_1.cpp")
+            set(parts PARTS 2)
+        else()
+            set(module gonames)
+            set(header "${CMAKE_CURRENT_SOURCE_DIR}/tests/go_full_names.hpp")
+            set(policy "${CMAKE_CURRENT_SOURCE_DIR}/tests/go_full_names.policy.json")
+            set(program "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_go_full_names.go")
+            set(sources "${go_full_dir}/generated/${module}.cpp")
+            set(parts)
+        endif()
+        rosetta_generate_go(HEADER "${header}" MODULE ${module} OUTPUT "${go_full_dir}/generated/${module}.cpp"
+            GO_API full GO_OUTPUT "${go_full_dir}/${module}/${module}.go" CLANG "${ROSETTA_CLANG_EXECUTABLE}"
+            POLICY "${policy}" ${parts})
+        add_library(rosetta_go_full_${example} SHARED ${sources})
+        target_compile_features(rosetta_go_full_${example} PRIVATE cxx_std_17)
+        get_filename_component(header_dir "${header}" DIRECTORY)
+        target_include_directories(rosetta_go_full_${example} PRIVATE "${header_dir}")
+        set_target_properties(rosetta_go_full_${example} PROPERTIES OUTPUT_NAME ${module}
+            LIBRARY_OUTPUT_DIRECTORY "${go_full_dir}/lib")
+        # A consumer module requiring the package through a replace directive.
+        set(test_dir "${go_full_dir}/test_${example}")
+        file(WRITE "${test_dir}/go.mod"
+            "module ${module}_test\n\ngo 1.24\n\nrequire ${module} v0.0.0\n\nreplace ${module} => ../${module}\n")
+        configure_file("${program}" "${test_dir}/main.go" COPYONLY)
+        foreach(variant plain race)
+            set(flags)
+            if(variant STREQUAL "race")
+                set(flags -race)
+            endif()
+            add_custom_command(OUTPUT "${test_dir}/${variant}"
+                COMMAND ${go_full_env} "${ROSETTA_GO_EXECUTABLE}" build ${flags} -o "${test_dir}/${variant}" .
+                WORKING_DIRECTORY "${test_dir}"
+                DEPENDS "${go_full_dir}/${module}/${module}.go" "${test_dir}/main.go" rosetta_go_full_${example}
+                COMMENT "Building the full Go ${example} test (${variant})" VERBATIM)
+            add_custom_target(rosetta_go_full_${example}_${variant} ALL DEPENDS "${test_dir}/${variant}")
+        endforeach()
+        list(APPEND go_full_packages "${go_full_dir}/${module}")
+    endforeach()
+    set(features_go "${go_full_dir}/features/features.go" "${go_full_dir}/features/data/data.go")
+    add_test(NAME go_full_features COMMAND "${go_full_dir}/test_features/plain" ${features_go})
+    add_test(NAME go_full_features_race COMMAND "${go_full_dir}/test_features/race" ${features_go})
+    add_test(NAME go_full_names COMMAND "${go_full_dir}/test_names/plain")
+    add_test(NAME go_full_names_race COMMAND "${go_full_dir}/test_names/race")
+    set_tests_properties(go_full_features go_full_names PROPERTIES TIMEOUT 60)
+    set_tests_properties(go_full_features_race go_full_names_race PROPERTIES TIMEOUT 120)
+    # gofmt-clean, go vet-clean, and godoc as `go doc` renders it.
+    add_test(NAME go_full_format COMMAND "${ROSETTA_GOFMT_EXECUTABLE}" -l ${go_full_packages})
+    set_tests_properties(go_full_format PROPERTIES FAIL_REGULAR_EXPRESSION "\\.go")
+    foreach(module features gonames)
+        add_test(NAME go_full_vet_${module} COMMAND ${go_full_env} "${ROSETTA_GO_EXECUTABLE}" vet ./...
+            WORKING_DIRECTORY "${go_full_dir}/${module}")
+        set_tests_properties(go_full_vet_${module} PROPERTIES TIMEOUT 120)
+    endforeach()
+    set(go_doc_checks
+        "package|.|Package features is the Go interface to the C\\+\\+ library features.*# Building.*CGO_LDFLAGS.*replace features => ../path"
+        "add|Add|func Add\\(a int\\) \\(int, error\\)\n    Add adds three integers.*# Example\n\n        int total.*Parameters:\n\n      - a: first term.*The error is an \\*Error of kind:.*AddWithB and AddWithC pass more"
+        "class|Shape|type Shape struct.*Shape wraps the C\\+\\+ class features::Shape.*NewShapeFrom.*func \\(s \\*Shape\\) Area\\(\\) \\(float64, error\\)"
+        "subpackage|./data.Scaled|package data // import \"features/data\".*Scaled calls C\\+\\+ features::data::scaled")
+    foreach(check ${go_doc_checks})
+        string(REPLACE "|" ";" check "${check}")
+        list(GET check 0 name)
+        list(GET check 1 symbol)
+        list(GET check 2 pattern)
+        add_test(NAME go_full_doc_${name} COMMAND ${go_full_env} "${ROSETTA_GO_EXECUTABLE}" doc ${symbol}
+            WORKING_DIRECTORY "${go_full_dir}/features")
+        set_tests_properties(go_full_doc_${name} PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "${pattern}")
+    endforeach()
+endif()

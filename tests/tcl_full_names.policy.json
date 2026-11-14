@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "select": "all",
+  "names": "flat",
+  "exclude": ["quirks::Custom"],
+  "rename": { "quirks::namespace_": "namespace", "quirks::class_": "class", "quirks::Words::new_": "new" },
+  "modules": { "quirks::stats": "stats" },
+  "enums": { "quirks::Permission": { "flags": ["read", "write", "execute"] } },
+  "exceptions": [ { "match": "quirks::lookup", "map": [ ["std::out_of_range", "KeyError"] ] } ]
+}

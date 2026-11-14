@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "select": "all",
+  "names": "flat",
+  "rename": { "gonames::fallback": "default", "gonames::create": "new" }
+}

@@ -102,4 +102,52 @@ if(ROSETTA_BUILD_GNU_APL_EXAMPLES OR ROSETTA_BUILD_DYALOG_EXAMPLES)
                 PASS_REGULAR_EXPRESSION "ROSETTA PASS ${family}" FAIL_REGULAR_EXPRESSION "FAIL")
         endforeach()
     endif()
+    # The full API (--apl-api full): python_features.hpp (split in two sources, prefix ft) and the
+    # names test, each a native function library libNAME_gnu_apl.so beside its script NAME.apl.
+    if(BUILD_TESTING AND ROSETTA_BUILD_GNU_APL_EXAMPLES)
+        set(apl_full "${apl_generated}/full")
+        rosetta_generate_apl(HEADER "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.hpp"
+            MODULE features OUTPUT "${apl_full}/features/features.cpp" APL_API full APL_PREFIX ft PARTS 2
+            APL_LIBRARY_DIR "${apl_full}/features"
+            CLANG "${ROSETTA_CLANG_EXECUTABLE}" POLICY "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.policy.json")
+        add_library(rosetta_apl_full_features MODULE "${apl_full}/features/features.cpp" "${apl_full}/features/features_1.cpp")
+        target_include_directories(rosetta_apl_full_features PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+        rosetta_generate_apl(HEADER "${CMAKE_CURRENT_SOURCE_DIR}/tests/apl_full_names.hpp"
+            MODULE names OUTPUT "${apl_full}/names/names.cpp" APL_API full APL_LIBRARY_DIR "${apl_full}/names"
+            CLANG "${ROSETTA_CLANG_EXECUTABLE}" POLICY "${CMAKE_CURRENT_SOURCE_DIR}/tests/apl_full_names.policy.json")
+        add_library(rosetta_apl_full_names MODULE "${apl_full}/names/names.cpp")
+        target_include_directories(rosetta_apl_full_names PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+        foreach(example features names)
+            set_target_properties(rosetta_apl_full_${example} PROPERTIES PREFIX "lib" OUTPUT_NAME ${example}_gnu_apl SUFFIX ".so"
+                LIBRARY_OUTPUT_DIRECTORY "${apl_full}/${example}")
+            target_compile_definitions(rosetta_apl_full_${example} PRIVATE HAVE_CONFIG_H)
+            target_include_directories(rosetta_apl_full_${example} SYSTEM PRIVATE "${ROSETTA_GNU_APL_SOURCE_DIR}" "${ROSETTA_GNU_APL_SOURCE_DIR}/src")
+            if(APPLE)
+                target_link_options(rosetta_apl_full_${example} PRIVATE -undefined dynamic_lookup)
+            endif()
+            target_compile_features(rosetta_apl_full_${example} PRIVATE cxx_std_17)
+            rosetta_warnings(rosetta_apl_full_${example})
+        endforeach()
+        set(apl_full_command "${ROSETTA_GNU_APL_EXECUTABLE}" --script --noSV --noColor --silent)
+        add_test(NAME apl_full_features COMMAND ${apl_full_command} -f "${apl_full}/features/features.apl"
+            -f "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_apl_full.apl")
+        add_test(NAME apl_full_names COMMAND ${apl_full_command} -f "${apl_full}/names/names.apl"
+            -f "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_apl_full_names.apl")
+        add_test(NAME apl_full_docs COMMAND ${apl_full_command} -f "${apl_full}/features/features.apl"
+            -f "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_apl_full_docs.apl")
+        foreach(test features names docs)
+            set_tests_properties(apl_full_${test} PROPERTIES TIMEOUT 120
+                PASS_REGULAR_EXPRESSION "ROSETTA PASS apl_full_${test}" FAIL_REGULAR_EXPRESSION "FAIL|ERROR")
+        endforeach()
+        # mep's APL language server reads the generated ⍝ documentation (mep-apl-lsp --doc). It is
+        # not part of this repository: set ROSETTA_MEP_APL_LSP (or put mep-apl-lsp on PATH).
+        find_program(ROSETTA_MEP_APL_LSP mep-apl-lsp HINTS "$ENV{MEP_APL_LSP_DIR}" "$ENV{HOME}/projects/mep/build/agent-apl")
+        if(ROSETTA_MEP_APL_LSP)
+            add_test(NAME apl_full_mep_doc COMMAND "${CMAKE_COMMAND}" "-DMEP_APL_LSP=${ROSETTA_MEP_APL_LSP}"
+                "-DROOT=${apl_full}/features" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/apl_full_mep_doc.cmake")
+            set_tests_properties(apl_full_mep_doc PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "ROSETTA PASS apl_full_mep_doc")
+        else()
+            message(STATUS "mep-apl-lsp not found: skipping the apl_full_mep_doc test")
+        endif()
+    endif()
 endif()

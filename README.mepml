@@ -372,6 +372,42 @@ set_target_properties(library PROPERTIES PREFIX "")
 
 Enable `ROSETTA_BUILD_RUBY_EXAMPLES` for the repository examples; [RubyExample.cmake|cmake/RubyExample.cmake] shows interpreter-specific suffixes, linkage and test/REPL wiring. The verification facade uses C\+\+20 and native thread support. The core remains independent of Ruby headers/libraries.
 
+>>> Full Ruby API
+
+`--language ruby --ruby-api full` generates a library-shaped MRI extension (planned like the full Python backend) plus a YARD-documented Ruby file that loads it, instead of the minimal extension above.
+
+```{sh, eval=false}
+rosetta api.hpp --language ruby --ruby-api full --module library --policy api.policy.json \
+  -o generated/library.cpp --parts 4 --ruby-output lib/library.rb --ruby-native library/library
+# compile generated/library*.cpp into lib/library/library.$DLEXT (RbConfig::CONFIG['DLEXT'])
+ruby -I lib -e 'require "library"; p Library::Circle.new(2).area'
+```
+
+```{ruby, eval=false}
+require 'library'                        # lib/library.rb, which require_relative's the extension
+c = Library::Circle.new(2)
+c.area                                   # 12.0; C++ virtual dispatch
+Library.add(1, c: 3)                     # keywords skip defaulted parameters
+Library.apply(21) { |x| x * 2 }          # a block fills a std::function parameter
+class Triangle < Library::Shape          # Ruby subclasses override C++ virtual methods
+  def initialize(b, h) = (super(); @b, @h = b, h)
+  def area = @b * @h / 2.0
+end
+Library.area_of(Triangle.new(4, 3))      # 6.0, called from C++
+```
+
+- The module is `--ruby-module` (default: the module name in CamelCase; `A::B` nests), classes are CamelCase constants under it (namespaces flatten or join as in the other backends), C\+\+ inheritance is Ruby inheritance from `Library::NativeObject` (secondary bases contribute their methods), and nested classes and enums nest. Methods are snake_case: `is_x()`/`has_x()`/`empty()` returning bool become `x?`/`has_x?`/`empty?`, `set_x(v)` also answers `x=`, `get_x()` also `x`, `to_string()` also `to_s`. Static methods are class methods, free functions module functions, constants UPPER_CASE. Names that would replace a Ruby keyword or a core `Object`/`Kernel` method (`end`, `then`, `class`, `send`, `object_id`, `freeze`, `clone`, `puts`, `fail` ...) get a trailing `_`; classes named like core classes (`Object`, `Kernel`, `Comparable`) stay inside the module. Policy `rename` targets are used verbatim.
+- Overloads are resolved at run time in two passes (exact Ruby types, then conversions such as Integer to Float). Arguments may be passed by keyword (the C\+\+ parameter names), and a keyword may skip defaulted parameters whose C\+\+ default is a literal, enumerator or `{}`. Wrong arity raises `ArgumentError`, wrong types `TypeError` listing the signatures.
+- Operators `+ - * / % == < <= > >= & | ^ << >>`, unary `-@ +@ ~`, `[]` (and `[]=` from a mutable reference `operator[]`) and `()` as `call`. `<` with `==` adds `<=>` and `Comparable`; `size()` with an integral `operator[]` adds `each` and `Enumerable`; `std::hash` with `==` adds `hash`/`eql?`.
+- Conversions: vectors/deques/lists/arrays are Arrays, maps Hashes, sets `Set`s, pairs and tuples Arrays, `optional` and null pointers `nil`, variants any alternative, `complex` `Complex`, `std::string` UTF-8 Strings (Symbols and other encodings convert on the way in), `vector<unsigned char>` also a binary String, `char` a one-character String, `chrono::duration` Float seconds. Integers are range checked with `RangeError`, including full 64-bit values (bigints). Enums are modules of Symbol constants (`Kind::CIRCLE == :circle`, `Kind.values`, `to_i`/`from_i`); results are Symbols, arguments Symbols or Integers; policy flag enums are Integers (arguments also an Array of Symbols). Mutable reference container arguments are written back into the Array or Hash. Policy `convert` applies.
+- Callbacks take a block, Proc, lambda, Method or anything with `call`; Ruby exceptions (and `throw`/`break`) raised inside pass through C\+\+ unchanged. Returned `std::function`s are `Library::NativeCallable` objects (`call`, `[]`, `to_proc`, `arity`).
+- Errors: C\+\+ exceptions raise `Library::ArgumentError` (`invalid_argument`, `domain_error`, `length_error`), `IndexError` (`out_of_range`), `RangeError` (`overflow_error`, `range_error`), `TypeError`, `IOError` or `RuntimeError`, each a subclass of the Ruby class that includes `Library::Error`; `#cpp_class` names the C\+\+ type. Policy `exceptions` take Ruby (or Python) exception names.
+- Lifetime: Ruby owns constructed objects and results returned by value or `unique_ptr`; `close` destroys one now (`closed?`, `alive?`, `owned?`). Passing an object to a `unique_ptr` parameter moves it to C\+\+ (the Ruby object is then closed); `shared_ptr` shares it. Borrowed references keep their parent alive, a reference to an existing object returns that same Ruby object, and a Ruby subclass object C\+\+ owns stays alive as long as C\+\+ keeps it. `dup`/`clone` copy copyable classes; frozen objects reject non-const methods. All Ruby VALUEs held by C\+\+ are marked (and pinned against compaction).
+- Documentation: the `--ruby-output` file (default `MODULE.rb` beside OUTPUT) requires the extension through `--ruby-native` (default `MODULE/MODULE`, whose basename names `Init_<basename>`), then reopens every module and class with stubs under `if nil`, which Ruby never runs, so native methods stay in place while YARD (which reads both branches of a condition it cannot evaluate) and editors read them. Doxygen becomes Markdown with `@param [Type]`, `@return`, `@raise`, `@overload` (C\+\+ overloads, and a keyword `**options` form with `@option` tags), `@example`, `@note`, `@see`, `@deprecated`; types read `Array<Float>`, `Hash{String => Integer}`, `Boolean`, `Integer, nil`, `Proc`. Defaults appear as Ruby defaults where expressible, otherwise `nil` with a note. Run `yard doc --markup markdown lib/library.rb`; mep's Ruby language server reads the same file through the `require`.
+- In CMake, use `rosetta_generate_ruby(... RUBY_API full [RUBY_MODULE M] [RUBY_OUTPUT f.rb] [RUBY_NATIVE p] PARTS N)` and build the sources into a MODULE library with `PREFIX ""`, the interpreter's DLEXT suffix and `LIBRARY_OUTPUT_DIRECTORY` matching RUBY_NATIVE.
+
+`tests/test_ruby_full.rb` (ctest `ruby_full_features`, 385 checks) exercises this on `examples/python_features.hpp`; `tests/test_ruby_full_names.rb` (ctest `ruby_full_names`) covers reserved names and Ruby protocols. Both run under `just ruby-test`; tested with Ruby 3.4 on Linux. Free C\+\+ operator functions are not bound (the frontend rejects them), and C\+\+ cannot call Ruby from threads Ruby did not create.
+
 >> Octave
 
 Select GNU Octave with `--language octave`:
@@ -426,6 +462,39 @@ rosetta_generate_octave(HEADER api.hpp MODULE library
 ```
 
 Enable `ROSETTA_BUILD_OCTAVE_EXAMPLES` for the repository modules, including the enum fixture in `examples/octave_values.hpp`. [OctaveExample.cmake|cmake/OctaveExample.cmake] queries include/library directories from `mkoctfile`, checks its interpreter version, and shows complete CMake targets. The core remains independent of Octave libraries. Examples reuse the same native-only headers/policies as R/Python/Ruby; the verification facade needs C\+\+20 and thread support.
+
+>>> Full Octave API
+
+`--language octave --octave-api full` generates a library-shaped oct-file (planned like the full C#/Lisp backends on the shared C ABI layer) plus a `+PACKAGE` directory of classdef `.m` files that carry the help text and call one native dispatcher, instead of the minimal module above.
+
+```{sh, eval=false}
+rosetta api.hpp --language octave --octave-api full --module library --policy api.policy.json \
+  -o generated/__library__.cpp --parts 4 --octave-output lib
+# compile generated/__library__*.cpp into lib/__library__.oct (mkoctfile include dirs, liboctinterp/liboctave)
+octave --eval 'addpath lib; c = library.Circle (2); c.area ()'
+```
+
+```{octave, eval=false}
+c = library.Circle (2);            % classdef handle class in lib/+library/Circle.m
+c.area ()                          % 12.566; C++ virtual dispatch
+library.apply (21, @(x) x * 2)     % function handles fill std::function parameters
+[lo, hi] = library.bounds ([3 1 2], 0, 0);   % mutable references come back as extra outputs
+help library.Circle.area           % Doxygen as Octave help text
+% classdef Triangle < library.Shape ... methods function a = area (obj) ... end
+library.area_of (Triangle (4, 3))  % Octave subclasses override C++ virtual methods
+```
+
+- Files: OUTPUT holds the C\+\+ glue whose `DEFMETHOD_DLD` is `__MODULE__` (name the oct-file `__MODULE__.oct`); `--octave-output DIR` (default OUTPUT's directory) receives `+PACKAGE/` with one `.m` per class, enum, function and constant, a `Contents.m` index, and `+sub/` packages for policy modules. `--octave-package` defaults to the module name. Put DIR and the `.oct` on the path with `addpath`.
+- Classes are `handle` classes under `PACKAGE.NativeObject`; C\+\+ inheritance is classdef inheritance, fields and getters/setters are (Dependent) properties, static methods are `Static`, constants are `Constant` properties, nested classes join names. Overloads resolve at run time (double arguments prefer `double` overloads, typed integers integer ones); wrong types report the signatures. Methods named like Octave keywords or classdef protocol functions (`end`, `function`, `size`, `numel`, `disp`, `isempty` ...) get a trailing `_`.
+- Operators map to `plus minus uplus uminus mtimes mrdivide mod eq ne lt le gt ge not and or` (with `times`/`rdivide` aliases and derived `ne`/`gt`/`ge`); `operator[]` is `obj(i)` (1-based when every index is integral) and `obj{i}` (0-based); `operator()` is `obj(...)`. Without `operator==`, `==`/`~=` compare object identity.
+- Conversions: numeric vectors are row vectors, rectangular nested vectors matrices (cells of rows are accepted), vectors of strings cellstrs, ragged results cells; maps are `containers.Map` (structs are accepted); sets are sorted rows; pairs and tuples cells; `optional` and null pointers `[]`; variants any alternative; complex numbers complex scalars; bool logical. Integers are range checked; results beyond `flintmax` come back as `int64`, beyond `intmax('int64')` as `uint64`. Enums are classdef classes of `Constant` numeric properties (`library.Kind.circle`); arguments accept the number or the enumerator name.
+- Callbacks take function handles (or anything `feval` accepts); Octave errors inside pass through C\+\+ with their identifier. Returned `std::function`s are function handles.
+- Errors: C\+\+ exceptions raise Octave errors with identifiers `PACKAGE:invalid_argument`, `PACKAGE:out_of_range`, `PACKAGE:arithmetic_error`, `PACKAGE:native` and so on, following policy `exceptions`.
+- Lifetime: Octave owns constructed objects and results returned by value or `unique_ptr`, freed when the last handle disappears; `delete(obj)` destroys one now (`isclosed(obj)`). Borrowed references keep their parent alive, a reference to an existing object returns the same Octave object, and an Octave subclass object C\+\+ owns stays alive as long as C\+\+ keeps it.
+- Documentation: each `.m` file starts with an Octave help block (plain text with an H1 summary line, `Usage`, parameters with Octave types, `Returns`, `Errors`, defaults, C\+\+ signatures and `See also`), so `help library.Circle`, `help library.Circle.area`, `get_help_text` and editors (mep reads the same comments) show it. `doc` needs Octave's info manual and does not read package help. The generated-file notice sits at the end of each file so it never replaces the help.
+- In CMake, use `rosetta_generate_octave(... OCTAVE_API full [OCTAVE_OUTPUT DIR] [OCTAVE_PACKAGE P] PARTS N)` and build the sources into a MODULE library with `PREFIX ""`, `OUTPUT_NAME __MODULE__` and `SUFFIX .oct` ([OctaveExample.cmake|cmake/OctaveExample.cmake] shows the targets).
+
+`tests/test_octave_full.m` (ctests `octave_full_features`, 302 checks, and `octave_full_help`, 29 checks) exercises this on `examples/python_features.hpp` with PARTS 2; `tests/test_octave_full_names.m` (ctest `octave_full_names`, 54 checks) covers reserved names, protocols and subpackages. All run under `just octave-test`; tested with Octave 11 on Linux. Index assignment through `operator[]` (`obj(i) = v`), object arrays, chained indexing on function results and calls from threads Octave did not create are unsupported; stale `.m` files from earlier generations are not removed.
 
 >> Julia
 
@@ -604,6 +673,29 @@ arguments/results, inheritance, subclassing and Java collection/async protocols
 remain open. Native template, hierarchy, worklist and task facades verify selected
 contracts through the supported API. The [Java verification matrix|docs/roadmap.md#java-verification]
 tracks this initial scope and its remaining work.
+
+>>> Full Java API
+
+`--language java --java-api full` generates a library-shaped Java API instead of the minimal interface above: a JNI C\+\+ library (the shared C ABI planning in `src/cabi_full.cpp`, with JNI glue appended) and one `.java` file per class under a source root:
+
+```{sh, eval=false}
+rosetta api.hpp --language java --java-api full --module library --policy api.policy.json \
+  -o generated/library.cpp --java-output generated/src --parts 4
+clang++ -std=c++17 -shared -fPIC -I"$JAVA_HOME/include" -I"$JAVA_HOME/include/linux" \
+  generated/library*.cpp -o generated/liblibrary.so
+javac --release 17 -d classes -sourcepath generated/src App.java
+java -Djava.library.path=generated -cp classes App
+```
+
+- The package is `--java-package` (default: the module name); policy submodules become subpackages (`library.data.Data`). Module functions are static methods of the class named after the module in PascalCase (`library.Library`). The library loads with `System.load` from the system property `library.library` or the environment variable `LIBRARY_JAVA_LIBRARY`, else `System.loadLibrary("library")` (`--java-library` changes the base name).
+- Every C\+\+ class becomes a class extending `NativeObject` (`AutoCloseable`; a `Cleaner` releases abandoned objects), and C\+\+ inheritance is Java inheritance; secondary bases are reached through `asX()` views. Names are camelCase, fields become `getX`/`setX`, constants `UPPER_SNAKE` static finals, enums Java enums. A Java subclass overrides virtual methods: C\+\+ calls the Java override (directors hold JNI global references, and threads started in C\+\+ are attached and detached).
+- Overloads are resolved at run time in C\+\+; default arguments become overloads with fewer parameters. Operators become `plus`, `times`, `negate`, `get(int)`, `call`, ...; `operator==` gives `equals`/`hashCode`, `operator<` `Comparable`, `size()` with an indexed `at`/`get` `Iterable`, and `to_string()` `toString()`. Java keywords and `Object`'s final methods get a trailing `_`.
+- Integers are `long`/`int` with range checks; vectors of numbers are `double[]`/`int[]`/`long[]`, other vectors `List`, sets `Set`, maps `Map`, `optional` `Optional`/`OptionalDouble`, pairs and tuples generated records, `std::complex` the `Complex` record, `std::function` `java.util.function` interfaces (or generated `FunctionN`/`ConsumerN`), mutable references `Ref<T>`.
+- C\+\+ exceptions become `NativeError.InvalidArgument` (an `IllegalArgumentException`), `NativeError.OutOfRange` (`IndexOutOfBoundsException`), `NativeError.Arithmetic` (`ArithmeticException`), `NativeError.NotImplemented` (`UnsupportedOperationException`) or `NativeException`, each with the C\+\+ `kind()`. A Java exception thrown in a callback or override crosses C\+\+ and is rethrown unchanged.
+- Doxygen becomes Javadoc (summary, paragraphs, lists, code, `@param`, `@return`, `@throws`, `@see`, `@deprecated`, plus the C\+\+ signature and defaults) that passes `javadoc -Xdoclint:all`. mep's Java server reads it from the plain `.java` files: point `MEP_JAVA_SOURCEPATH` at the source root.
+- In CMake, use `rosetta_generate_java(... JAVA_API full JAVA_OUTPUT dir [JAVA_PACKAGE p] [JAVA_LIBRARY name] [PARTS N])`; its declared Java output is `dir/PACKAGE/package-info.java`, and the JNI headers come from `find_package(JNI)`.
+
+`tests/TestJavaFull.java` (ctest `java_full_features`, 299 checks) exercises all of this on `examples/python_features.hpp`, `tests/TestJavaNames.java` (`java_full_names`) the names that collide with Java, and `java_full_*_javadoc` run doclint with `-Werror`; `just java-test` runs them.
 
 >> C#
 
@@ -803,6 +895,40 @@ inheritance remain unsupported. Strict generation rejects these declarations;
 backend has been tested with GNU Fortran on Linux; other compilers and platforms
 remain unverified.
 
+>>> Full Fortran API
+
+`--language fortran --fortran-api full` generates a library-shaped Fortran 2018 module over the shared C ABI library (the planning of the full Julia and C# backends, through `src/cabi_full.cpp`) instead of the minimal interface above. Fortran calls the library through `bind(C)` interfaces (no `dlopen`); the generated source holds a runtime module, the main module and one module per policy submodule.
+
+```{sh, eval=false}
+rosetta api.hpp --language fortran --fortran-api full --module library --policy api.policy.json \
+  -o generated/library.cpp --fortran-output generated/library.f90 --parts 4
+clang++ -std=c++17 -shared -fPIC generated/library*.cpp -o generated/liblibrary.so
+gfortran -std=f2018 -c generated/library.f90 && gfortran app.f90 library.o -Lgenerated -llibrary
+```
+
+```{fortran, eval=false}
+program app
+  use library
+  implicit none
+  type(Circle) :: c
+  type(rosetta_error) :: status
+  c = Circle(2d0)                      ! a generic named after the type
+  print *, c%area(), describe(c)       ! type-bound procedures and module functions
+  c = Circle(-1d0, status=status)      ! every procedure takes an optional status
+  if (status%code /= 0) print *, status%kind, ': ', status%message
+end program
+```
+
+- Every C\+\+ class becomes a derived type extending `rosetta_object`, and C\+\+ inheritance is `extends`. Methods are type-bound procedures (`c%twice_area()`), fields `%get_x()` / `%set_x(v)`, static methods and class constants module procedures `<type>_<name>`. Objects are reference counted: assignment shares the C\+\+ object, the last scalar copy to go out of scope releases it, and `%close()` releases it now. Arrays of objects are not finalized (gfortran cannot finalize them reliably); build them element by element, not with array constructors. Object results are always the declared type; assigning to a variable of a derived class converts, `%class_name()` names the native class.
+- Overloads become specifics of a generic interface (type-bound generics for methods) and are resolved again in C\+\+ at run time; default arguments become one specific per arity. Specifics Fortran cannot tell apart (F2018 15.4.3.4.5, e.g. `f(Base&)` and `f(Derived&)`, or functions and subroutines under one name) are dropped with a diagnostic under `--skip-unsupported`. C\+\+ operators become `operator(+)` and friends (`!` is `.not.`), `operator[]` `%item`, `operator()` `%invoke`.
+- `int`, `short`, `size_t`, `unsigned` and `long` are default `integer` (results are range checked); types spelled `int64_t`, `uint64_t` or `long long` are `integer(c_int64_t)`. `double`/`float` are `real(c_double)`/`real(c_float)`, `bool` `logical`, `std::complex` `complex(c_double)`, strings `character(len=*)` in and deferred-length allocatable out. Vectors are assumed-shape arrays in and allocatable arrays out; `vector<string>` is a character array in (trailing blanks trimmed) and `type(rosetta_string)` (`%s`) out; nested vectors, maps, pairs, tuples and optional results are generated types (`%v`, `keys`/`values`, `first`/`second` or `item1..`, `has_value`/`value`). `std::optional` and pointer parameters are `optional` dummies, mutable references `intent(inout)`. Enums are integer parameters `<enum>_<label>`.
+- `std::function` parameters take Fortran procedures matching a generated abstract interface (errors are reported with `rosetta_raise(message)`); returned functions are types with `%invoke`.
+- A Fortran type extending a class with virtual methods overrides its bindings (same dummy names, including the optional `status`); `call <type>_init(self, ...)` creates the C\+\+ object, and C\+\+ then calls the overrides. `self%Circle%name()` runs the C\+\+ implementation. Such objects must be `target`s that stay in place while C\+\+ uses them.
+- Errors: every procedure takes an optional trailing `type(rosetta_error) :: status` (`code`, `kind` such as `invalid_argument`, `message`); without it an error stops the program. Names keep the C\+\+ spelling, escaped only where Fortran would reject them (`Integer_`, `size_`); `--fortran-module NAME` names the module. Doxygen becomes FORD `!>` comments.
+- In CMake, use `rosetta_generate_fortran(... FORTRAN_API full PARTS N)`; link the program with the shared native library.
+
+`tests/test_fortran_full.f90` (ctest `fortran_full_features`) exercises all of this on `examples/python_features.hpp`; `tests/test_fortran_names.f90` (ctest `fortran_full_names`) covers names that collide with Fortran keywords and intrinsics. Tested with GNU Fortran 16 on Linux.
+
 >> Common Lisp
 
 Select Common Lisp with `--language common-lisp`. Generation writes C\+\+ source for a private C ABI shared library and a `.lisp` interface that calls it through [CFFI|https://cffi.common-lisp.dev/]; it needs no Lisp installation:
@@ -933,7 +1059,48 @@ target_link_libraries(library PRIVATE "${TCL_STUB_LIBRARY}")
 set_target_properties(library PROPERTIES PREFIX "")
 ```
 
-Enable `ROSETTA_BUILD_TCL_EXAMPLES` for the repository modules; [TclExample.cmake|cmake/TclExample.cmake] locates Tcl through `tclsh9.0`. Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Enums, containers, overloads, callbacks, class-valued/borrowed values, inheritance, TclOO classes and Tcl 8.6 remain open. Tcl 8.6 wraps out-of-range 64-bit integers and cannot represent characters beyond the BMP, so it needs different conversions. Tested with Tcl 9.0.4 on macOS (arm64); other platforms remain unverified.
+Enable `ROSETTA_BUILD_TCL_EXAMPLES` for the repository modules; [TclExample.cmake|cmake/TclExample.cmake] locates Tcl through `tclsh9.0`. Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. The minimal backend leaves enums, containers, overloads, callbacks, class-valued/borrowed values, inheritance, TclOO classes and Tcl 8.6 to the full API below. Tcl 8.6 wraps out-of-range 64-bit integers and cannot represent characters beyond the BMP, so it needs different conversions. Tested with Tcl 9.0.4 on macOS (arm64); other platforms remain unverified.
+
+>>> Full Tcl API
+
+`--language tcl --tcl-api full` generates a library-shaped Tcl extension (planned like the full Python backend) with TclOO classes, plus a documented package file and `pkgIndex.tcl`, instead of the minimal extension above. The extension is built with stubs (`Tcl_InitStubs`, `Tcl_OOInitStubs`) and loads into Tcl 9 and Tcl 8.6.
+
+```{sh, eval=false}
+rosetta api.hpp --language tcl --tcl-api full --module library --policy api.policy.json \
+  -o generated/library.cpp --parts 4 --tcl-output library/library.tcl
+# compile generated/library*.cpp with -DUSE_TCL_STUBS, link the stub library, and write the
+# result as library/library[info sharedlibextension] beside library.tcl and pkgIndex.tcl
+TCLLIBPATH=$PWD tclsh <<< 'package require library; puts [[library::Circle new 2] area]'
+```
+
+```{tcl, eval=false}
+package require library                    ;# pkgIndex.tcl sources library.tcl, which loads the extension
+set c [library::Circle new 2]
+$c area                                    ;# 12.0; C++ virtual dispatch
+library::add 1 2                           ;# defaults are optional trailing arguments
+library::apply {::tcl::mathop::* 2} 21     ;# a command prefix fills a std::function parameter
+oo::class create Triangle {                ;# Tcl subclasses override C++ virtual methods
+    superclass ::library::Shape
+    variable b h
+    constructor {base height} { next; set b $base; set h $height }
+    method area {} { expr {$b * $h / 2.0} }
+}
+library::area_of [Triangle new 4 3]        ;# 6.0, called from C++
+$c destroy                                 ;# or: rename $c {}
+```
+
+- Commands live in the namespace `--tcl-namespace` (default: the module name; `a::b` nests) and are exported for `namespace import`, except names of Tcl's own global commands (`set`, `list`, `string`, `info`, `rename`, `namespace` ...), which stay reachable only qualified and never replace the built-ins. Policy `modules` become child namespaces (`library::data::unit`). Names are the C\+\+ names; namespaces flatten or join with `__` as in the minimal backend. Classes are TclOO classes deriving from `library::NativeObject` (C\+\+ multiple inheritance maps to TclOO multiple superclasses), constructors are `new`/`create`, static methods are methods of the class object (`library::Circle unit`). Methods that would replace a TclOO or runtime method (`destroy`, `eval`, `variable`, `varname`, `unknown`, `cget`, `configure`, `alive`, `owned`) get a trailing `_`, as do static methods named `new`, `create` or `createWithNamespace`.
+- Fields are `$obj name ?value?` (unless a method has that name) and `$obj cget -name`, `$obj configure ?-name value ...?`; const, reference and policy `readonly` fields are read-only. Operators are methods: `add sub mul div mod neg pos eq ne lt le gt ge bitand bitor bitxor lshift rshift bitnot not`, `index` for `[]` and `call` for `()`; `eq` with an argument of another type answers 0. Compound assignment and conversion operators stay C\+\+-only.
+- Overloads are resolved at run time in three passes (exact Tcl representations, then conversions such as integers for doubles, then anything that converts); a single overload just converts its arguments. Values have no types in Tcl, so a plain string of several numbers prefers a list overload, and `[list ...]` selects one explicitly. Wrong arity raises `wrong # args` listing the signatures.
+- Conversions: integers are range checked, including full 64-bit unsigned values and bignums (out-of-range values raise errors, never wrap); doubles accept any Tcl number; bool any Tcl boolean; `std::string` is UTF-8 (embedded NULs survive), `char` a one-character string. Vectors, deques, lists, arrays and sets are lists (sets sorted), maps dicts, pairs and tuples lists, `optional` and null pointers the empty string, variants any alternative, `complex` the list `{re im}`, `vector<unsigned char>` also a byte array, `chrono::duration` seconds. Enums are their enumerator names (arguments also take the integer; the array `library::Kind` maps names to values); policy flag enums are integers, and arguments also take a list of names. A mutable reference parameter of a converted type takes a variable name, written back after the call. Constants are read-only namespace variables (`$library::golden`, `$library::Shape::sides_unknown`).
+- Callbacks take a command prefix, called at global level with the arguments appended; Tcl errors (with their `-errorcode` and `-errorinfo`) and `break`/`continue` pass through C\+\+ unchanged. A returned `std::function` is a new command `library::native_function#N` (`rename` it to `{}` to free it); the empty string is an empty function.
+- Errors: C\+\+ exceptions raise Tcl errors with `-errorcode {LIBRARY kind cpp_type message}`, kind one of `invalid_argument`, `domain_error`, `length_error`, `out_of_range`, `logic_error`, `overflow_error`, `underflow_error`, `range_error`, `runtime_error`, `filesystem_error`, `io_error`, `bad_alloc`, ..., `exception`; policy `exceptions` map a C\+\+ type to a kind of your choice. Binding errors (wrong types, closed objects) use `{LIBRARY binding message}` and pure virtual calls `{LIBRARY not_implemented ...}`. Use `try ... trap {LIBRARY out_of_range} ...`. Every native call flushes Tcl's stdout channel before it runs and C\+\+'s `std::cout`/`stdout` after, so `puts` and native output stay in order when stdout is a pipe or file.
+- Lifetime: each object is a TclOO object command, destroyed by `$obj destroy`, `rename $obj {}` or deleting the interpreter. Tcl owns constructed objects and results returned by value, pointer-with-ownership or `unique_ptr`; destroying one deletes the C\+\+ object (`$obj alive`, `$obj owned`). Passing an object to a `unique_ptr` parameter moves it to C\+\+ (the Tcl object stays but is closed); `shared_ptr` shares it. Borrowed references keep their parent's C\+\+ object alive, and a reference to an object that already has a Tcl command returns that same command. `oo::copy` copies copyable classes. A Tcl subclass object C\+\+ owns stays alive until C\+\+ deletes it, which deletes its command; destroying a subclass object C\+\+ still shares makes its overrides fall back to the C\+\+ implementation (or a `not_implemented` error). Subclass constructors must call `next`.
+- Directors: `oo::class create X { superclass ::library::Shape ... }` overrides virtual methods; C\+\+ calls a Tcl method only when `info object call` shows a Tcl implementation, otherwise the C\+\+ one, and `next` inside an override runs the C\+\+ implementation. Per-object `oo::objdefine` overrides on a native (non-subclass) object do not reach C\+\+.
+- Documentation: the `--tcl-output` file (default `MODULE.tcl` beside OUTPUT) loads the extension (`--tcl-library`, default MODULE, from its own directory) and provides the package (`--tcl-version`, default 1.0); `--tcl-pkgindex` (default `pkgIndex.tcl` beside it) points `package ifneeded` at it. Then, inside `if {0} {...}`, which Tcl never runs, `namespace eval ::library {...}` declares every command as `proc name {params with defaults} {}`, every class as `oo::class create Name { superclass ...; constructor ...; method ... }`, static methods as `oo::objdefine Name method ...`, enums and constants as `variable`s, each directly after a comment block in the usual Tcl style (`# name -- summary`, description, `usage:`, `args:` with types and defaults, `result:`, `errors:` with -errorcode kinds, `note:`, `see:`, `example:`). mep's Tcl language server reads these comment blocks as the docs of the procs and methods after them (hover, signature help, `mep-tcl-lsp --doc library::add --file library/library.tcl`).
+- In CMake, use `rosetta_generate_tcl(... TCL_API full [TCL_OUTPUT dir/M.tcl] [TCL_PKGINDEX f] [TCL_NAMESPACE ns] [TCL_LIBRARY name] [TCL_VERSION v] PARTS N)` and build the sources into a MODULE library with `USE_TCL_STUBS`, the stub library, `PREFIX ""`, the `info sharedlibextension` suffix and `LIBRARY_OUTPUT_DIRECTORY` set to TCL_OUTPUT's directory. That directory is the installable package: put it (or its parent) on `auto_path`/`TCLLIBPATH` and `package require M`.
+
+`tests/test_tcl_full.tcl` (ctest `tcl_full_features`, 391 checks) exercises this on `examples/python_features.hpp`; `tests/test_tcl_full_names.tcl` (ctest `tcl_full_names`, 95 checks) covers commands named like Tcl's, TclOO method names, Tcl specials in strings, integer limits and containers, and `tcl_full_*_source` source each package file with `tclsh`. All run under `just tcl-test`; tested with Tcl 9.0.4 on Linux, and both test scripts also pass against Tcl 8.6.16. Free C\+\+ operator functions are not bound (the frontend rejects them), C\+\+ must call Tcl only on the interpreter's thread, and on Tcl 8.6 characters beyond the BMP are not supported.
 
 >> Guile Scheme
 
@@ -989,6 +1156,46 @@ set_target_properties(library PROPERTIES PREFIX "")
 ```
 
 Enable `ROSETTA_BUILD_GUILE_EXAMPLES` for the repository modules. Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Enums, containers, overloads, callbacks, class-valued/borrowed values, inheritance and GOOPS classes remain open. Tested with Guile 3.0.11 on macOS (arm64); other platforms remain unverified.
+
+>>> Full Guile API
+
+`--language guile --guile-api full` generates a library-shaped libguile extension (planned like the full Python backend) plus the Scheme module that loads it and defines the documented public API with GOOPS, instead of the minimal extension above.
+
+```{sh, eval=false}
+rosetta api.hpp --language guile --guile-api full --module library --policy api.policy.json \
+  -o generated/library.cpp --parts 4 --guile-output scheme/library.scm
+# compile generated/library*.cpp into scheme/liblibrary_guile.so (beside library.scm)
+GUILE_LOAD_PATH=$PWD/scheme guile -c '(use-modules (oop goops) (library)) (display (area (make <circle> 2.0)))'
+```
+
+```{guile, eval=false}
+(use-modules (oop goops) (library))    ; scheme/library.scm, which load-extension's the library
+(define c (make <circle> 2.0))
+(area c)                               ; 12.0; C++ virtual dispatch through a GOOPS generic
+(add 1 #:default 3)                    ; #:default skips a defaulted parameter
+(apply (lambda (x) (* x 2)) 21.0)      ; a procedure fills a std::function parameter
+(apply + '(1 2))                       ; 3: other arguments reach Guile's apply
+(define-class <triangle> (<shape>) (b #:init-keyword #:b) (h #:init-keyword #:h))
+(define-method (area (t <triangle>)) (/ (* (slot-ref t 'b) (slot-ref t 'h)) 2.0))
+(area-of (make <triangle> #:b 4.0 #:h 3.0))   ; 6.0, called from C++
+(catch 'library-invalid-argument (lambda () (make <circle> -1.0))
+  (lambda (key subr message irritants data) message))  ; "negative radius"
+```
+
+- The module is `(library)` (`--guile-module`, e.g. `"datamunge"` or `"(a b)"`; the module file is named after its last part), and policy `modules` become `(library sub)` in `library/sub.scm` beside it. Names are kebab-case: `is_x()` and other bool results become `x?`/`f?`, `set_x(v)` becomes `set-x!`, classes `<kebab-case>` (namespaces flatten or join with `-`), static methods `<class>-<method>` procedures, constants variables (`golden`, `shape-sides-unknown`). Policy `rename` targets are used verbatim.
+- Clashes with Guile are handled by kind. Names of Guile or GOOPS syntax (`define`, `lambda`, `if`, `quote`, `define-method` ...), GOOPS procedures (`make`, `initialize`, `class-name`, `slot-ref` ...) and GOOPS classes (`<string>`, `<class>`) get a trailing `_` (`define_`, `make_`, `<string_>`), so code that uses them keeps working. Names of other core procedures (`list`, `length`, `display`, `apply`, `reverse`, `max` ...) are exported with `#:replace`, so `use-modules` does not warn, and they extend the core procedure instead of hiding it: arguments no C\+\+ overload accepts go to Guile's procedure (`(length '(1 2))` is 2, `(length words)` calls C\+\+). Import with `#:prefix` or `#:select` to keep Guile's binding untouched, and import SRFI-1 with `#:select` when the library defines `find` or `first`.
+- Classes are GOOPS classes deriving from `<native-object>`, with C\+\+ inheritance (including multiple inheritance) as GOOPS inheritance. `(make <circle> 2.0)` runs the C\+\+ constructor with the positional arguments (overloads resolved at run time); keyword initargs after them initialize the slots of Scheme subclasses. A `make-circle` procedure documents the constructors. Methods and field accessors are generic functions shared by all classes (`(area shape)`, `(x p)`, `(set-x! p 3.0)`, `(set! (x p) 3.0)`); a free function with the same name is the generic's default method. Operators extend Guile's generics `+ - * / modulo equal? < <= > >=`; `&`, `|`, `^`, `~`, `<<`, `>>` become `bit-and`, `bit-or`, `bit-xor`, `bit-not`, `shift-left`, `shift-right`, `[]` becomes `ref` (and `ref-set!` for a mutable reference result), `()` becomes `call`.
+- Directors: subclass a polymorphic class with `define-class` and specialize its generics with `define-method`; C\+\+ virtual calls go to the Scheme methods, `(next-method)` runs the C\+\+ implementation, and an unimplemented pure virtual raises `library-not-implemented`. A subclass that defines `initialize` must call `next-method`.
+- Overloads are resolved in two passes (exact Scheme types, then conversions such as exact integers for reals). Defaulted parameters are `#:optional` with the C\+\+ literal as the Scheme default where Scheme can spell it; `#:default` passes the C\+\+ default explicitly. Wrong arity raises `wrong-number-of-args`, wrong types `wrong-type-arg` listing the signatures.
+- Conversions: integers are exact and range checked with `out-of-range`, including 64-bit values and bignums; reals take any real; bool `#t`/`#f`; `char` a character; `std::string` UTF-8 strings (symbols convert on the way in). Vectors, deques, lists, arrays and sets are lists (arguments also take vectors and uniform vectors, and mutable reference arguments are written back into the vector or list), `vector<unsigned char>` bytevectors, maps association lists (arguments also take hash tables), pairs pairs, tuples lists, `optional` and null pointers `#f`, variants any alternative, `complex` complex numbers, `chrono::duration` real seconds. Enums are symbols (`'circle`; arguments also take the integer) with `kind-values`, `kind->integer` and `integer->kind`; policy flag enums are integers, and arguments also take a list of symbols.
+- Callbacks take any procedure (lambdas, primitives, generics); Scheme exceptions raised inside, including `raise-exception` of any object and `throw`, pass through C\+\+ unchanged, and C\+\+ threads may call back (they enter Guile mode). Returned `std::function`s are ordinary procedures.
+- Errors: C\+\+ exceptions are thrown to the keys `library-invalid-argument` (`invalid_argument`, `domain_error`, `length_error`), `library-out-of-range`, `library-range-error`, `library-type-error`, `library-io-error`, `library-memory-error` or `library-runtime-error`, with Guile's arguments `(subr message irritants (cpp-class))`, so `catch`, `with-exception-handler`, `error?` and `exception-message` work; `library-error?`, `library-error-kind`, `library-error-message` and `library-error-cpp-class` take an exception object or a key. Policy `exceptions` take a key suffix (`key-error`) or a Ruby/Python exception name.
+- Lifetime: Scheme owns constructed objects and results returned by value or `unique_ptr`; `(close! obj)` destroys one now (`closed?`, `alive?`, `owned?`), and otherwise a finalizer queues it for destruction on the next native call (C\+\+ destructors never run on Guile's finalizer thread). Passing an object to a `unique_ptr` parameter moves it to C\+\+; `shared_ptr` shares it. Borrowed references keep their parent alive, a reference to an object Scheme already has returns that same object, and a Scheme subclass object C\+\+ owns stays alive as long as C\+\+ keeps it. `shallow-clone` copies copyable classes.
+- Documentation: every public procedure is a `define`/`define*` whose docstring follows Guile's convention: a summary line, the C\+\+ description, then per signature `Arguments:` (with Scheme types and defaults), `Returns:`, `Raises:` (keys and C\+\+ types), `C++:` (the declaration), and `Example:`, `Note:`, `Warning:`, `See also:`. `(procedure-documentation f)` returns it at run time, also for generics (`area` is a documented applicable struct whose `define-method` reaches the generic). Classes carry the same kind of text as `;;` comments above `define-class` and as their `documentation` property (`(object-documentation <circle>)`, `,describe`). mep's Scheme language server reads the docstrings and formals from the module file.
+- In CMake, use `rosetta_generate_guile(... GUILE_API full [GUILE_MODULE m] [GUILE_EXTENSION lib] GUILE_OUTPUT dir/M.scm PARTS N)` and build the sources into a MODULE library with `PREFIX ""`, `OUTPUT_NAME lib<M>_guile` (or GUILE_EXTENSION) and `LIBRARY_OUTPUT_DIRECTORY` set to GUILE_OUTPUT's directory. To install, copy that directory (the `.scm` files, policy submodule directories and the library) into a directory on `%load-path` (`guile -c '(display (%site-dir))'`); the module finds the library beside itself, else through `GUILE_EXTENSIONS_PATH`.
+- Precompiling: a large module takes Guile a while to compile (a 40k-line binding about 45 s), so rather than leave that to the first `(use-modules ...)`'s auto-compilation, compile it at build time with `rosetta_compile_guile(TARGET m_go MODULE_FILE dir/M.scm DEPENDS <library target> [OUTPUT_DIR ccache] [INSTALL_DESTINATION lib/guile/3.0/site-ccache] [WARNINGS ...] [WARNINGS_AS_ERRORS])`. It runs `guild compile` on `M.scm` and the submodule files `M/**.scm`, writing `M.go` and `M/**.go` into OUTPUT_DIR (default `<target>-ccache` in the build directory), and installs them with INSTALL_DESTINATION (Guile's own layout is `pkg-config --variable=siteccachedir guile-3.0`). Put that directory on `GUILE_LOAD_COMPILED_PATH` beside the `.scm` directory on `GUILE_LOAD_PATH`; the module then loads compiled (a fraction of a second) even with `--no-auto-compile`. The `.go` files are relocatable (the module finds its library through `%load-path` at load time); Guile ignores a `.go` older than its `.scm`. Each top-level name is defined once, so `-W shadowed-toplevel` and the other default warnings stay quiet, and WARNINGS_AS_ERRORS makes any warning fail the build.
+
+`tests/test_guile_full.scm` (ctest `guile_full`, 457 checks, 257 without the many-objects loop; `guile_full_compiled` reruns it against the `.go` files `rosetta_compile_guile` precompiles, with warnings as errors, and checks they were the ones loaded) exercises this on `examples/python_features.hpp`; `tests/test_guile_full_names.scm` (ctest `guile_full_names`, 95 checks) covers syntax, core and GOOPS names, `?`/`!` names, case, operators, flags, bignums, complex numbers and hash tables; `tests/test_guile_full_docs.scm` (ctest `guile_full_docs`) reads the module file back with `read` and compares every docstring with `procedure-documentation`. All run under `just guile-test`; tested with Guile 3.0.11 on Linux. Free C\+\+ operator functions are not bound (the frontend rejects them); C\+\+ parameters cannot be passed by keyword; a non-local exit other than an exception (an escape continuation) out of a callback crosses a continuation barrier and raises an error instead; `optional<bool>` treats `#f` as empty.
 
 >> OCaml
 
@@ -1053,7 +1260,46 @@ target_include_directories(library_stubs PRIVATE "${OCAML_STDLIB}")  # from `oca
 set_target_properties(library_stubs PROPERTIES POSITION_INDEPENDENT_CODE ON)
 ```
 
-[OcamlExample.cmake|cmake/OcamlExample.cmake] shows the full build: the bytecode DLL, the static archive, and the `.cma`/`.cmxa` libraries. Enable `ROSETTA_BUILD_OCAML_EXAMPLES` for the repository libraries. Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Enums, containers, overloads, callbacks, class-valued/borrowed values, inheritance, an `.mli` file, dune and findlib packaging remain open. Tested with OCaml 5.4.1 on macOS (arm64); other platforms remain unverified.
+[OcamlExample.cmake|cmake/OcamlExample.cmake] shows the full build: the bytecode DLL, the static archive, and the `.cma`/`.cmxa` libraries. Enable `ROSETTA_BUILD_OCAML_EXAMPLES` for the repository libraries. Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Enums, containers, overloads, callbacks, class-valued/borrowed values, inheritance, an `.mli` file, dune and findlib packaging remain open. Tested with OCaml 5.4.1 on macOS (arm64); other platforms remain unverified. The full API below covers them.
+
+>>> Full OCaml API
+
+`--language ocaml --ocaml-api full` generates a library-shaped OCaml package instead of the minimal module above: the shared C ABI library (the one the full Common Lisp, Julia, C#, Java and Go backends use) with a small C stub appended, the module `MODULE.ml`, its interface `MODULE.mli` carrying the C\+\+ documentation as odoc comments, and a findlib `META`, all beside `--ocaml-output`.
+
+```{sh, eval=false}
+rosetta api.hpp --language ocaml --ocaml-api full --module datamunge --policy api.policy.json \
+  -o generated/datamunge.cpp --parts 4 --ocaml-output datamunge/datamunge.ml
+# compile generated/datamunge*.cpp (-I "$(ocamlc -where)") into datamunge/dlldatamunge_stubs.so and
+# datamunge/libdatamunge_stubs.a, then, in datamunge/:
+ocamlc -bin-annot -c datamunge.mli && ocamlc -c datamunge.ml && ocamlopt -c datamunge.ml
+ocamlc -a -o datamunge.cma datamunge.cmo -dllib -ldatamunge_stubs -cclib -ldatamunge_stubs -cclib -lstdc++
+ocamlopt -a -o datamunge.cmxa datamunge.cmx -cclib -ldatamunge_stubs -cclib -lstdc++
+OCAMLPATH=$PWD/.. ocamlfind ocamlopt -package datamunge -linkpkg main.ml -o main   # or dune: (libraries datamunge)
+```
+
+```{ocaml, eval=false}
+open Datamunge
+let c = Circle.create 2.                         (* a submodule per class; type t = circle *)
+let () = Printf.printf "%g %g\n" (Circle.area c) (c |> Circle.twice_area)
+let n = add ~c:3 1                               (* C++ defaults are optional labelled arguments *)
+let s = pick_float 1.5                           (* overloads are named after their parameter types *)
+let y = apply (fun x -> x *. 2.) 21.             (* closures fill std::function parameters *)
+let t = Shape.extend ~area:(fun _ -> 6.) ~name:(fun _ -> "triangle") ()   (* OCaml subclass *)
+let () = assert (area_of t = 6. && describe t = "triangle:7")             (* called from C++ *)
+let () = match Circle.cast (make_shape Kind.Circle 1.) with Some c -> ignore (Circle.radius c) | None -> ()
+```
+
+- Classes are submodules (`Circle`, nested classes `Outer_Inner`) whose `type t` is a native object of the phantom type `-'a obj`: the row lists the class and its C\+\+ bases (`type circle = [ `Circle | `Shape ] obj`). Functions take `[> `Shape ] obj`, so every derived object passes without coercion, results have the closed type, `(c :> shape)` or `Shape.upcast c` upcasts and `Circle.cast : 'a obj -> t option` checks the dynamic C\+\+ class. Each class module repeats its inherited functions. `create` (plus `create_float` ... per constructor overload), methods, static methods, operators (`add`, `sub`, `mul`, `neg`, `equal`, `less`, `get` for `[]`, `call` for `()` ...), field getters `x` and setters `set_x` (`set_x_field` when a method already has that name, none for const or read-only fields), class constants, `close` and `is_closed`. Enums are modules with a variant `type t` (`Kind.Circle`), `to_int`/`of_int`, `to_string`/`of_string` and `all`. Free functions, constants and the policy's `modules` (submodules, `Data.unit ()`) complete the top module.
+- Names: values keep their C\+\+ spelling when it starts with a lowercase letter (`twice_area`, `camelCase`), and capitalized ones become snake_case (`HTTPServer` is `http_server`); OCaml keywords (`type`, `end`, `val`, `method`, `effect` ...) get a trailing `_`, as do functions named like `cast`, `close`, `is_closed` or `upcast`. Classes named like Stdlib modules (`List`, `String`, `Option`) are fine: the generated code always writes `Stdlib.`.
+- Overloads become separate functions; the first keeps the name and the others add their parameter types (`pick`, `pick_float`, `pick_string`, `pick_float_array`, `pick_shape`). C\+\+ still resolves the call among the group at run time, so an `int` too large for C\+\+ `int` reaches the `double` overload. Default arguments are optional labelled arguments placed before the positional ones (`?b:int -> ?c:int -> int -> int`; the object comes first among positional arguments, and a function without positional arguments takes `()`); omitting a later one lets C\+\+ apply its own default, and a gap before a given one takes the literal C\+\+ default (or raises `Invalid_argument` when it is not a literal).
+- Types: integers are `int` (63-bit, range-checked against the C\+\+ type both ways: values beyond `int`, such as `UINT64_MAX`, raise `Error (`Arithmetic, _)`), `float`, `bool`, `char`, `string` (bytes, NULs kept), `float array` for vectors of `double`, `bytes` for `vector<unsigned char>`, lists for other sequences and sets, association lists for maps, tuples for pairs and tuples, `option`, `Stdlib.Complex.t`, `float` seconds for durations, and closures for `std::function` (`unit -> r` without arguments; returned functions are OCaml closures). Mutable reference parameters are `ref` cells written back after the call. Policy `convert` applies. A null object result raises `Not_found`. `std::variant` has no mapping and is reported.
+- Errors: `std::invalid_argument` raises `Invalid_argument`, `bad_alloc` `Out_of_memory`, `out_of_range`, `domain_error`, `length_error` and overflow/underflow/range errors `Datamunge.Error (`Out_of_range | `Domain_error | `Length_error | `Arithmetic, message)`, other exceptions `Failure`, and errors of the binding (closed objects, integer ranges, pure virtual calls without an override) `Error (`Binding, _)`; a printer shows `Datamunge.Error (`Out_of_range, "...")`. An exception raised in an OCaml callback or override crosses C\+\+ and comes back as itself, with its backtrace.
+- OCaml subclasses (directors): a class with virtual methods has `extend` (one per constructor) taking one optional closure per virtual method, labelled by its name, whose first argument is the object itself (`Visitor.extend ~visit:(fun self v -> ...) ()`). C\+\+ calls reach the closures, and so do OCaml calls (`Shape.area t`); `Shape.Base.area` runs the C\+\+ implementation (for "super" calls), and a missing pure virtual override raises `Error (`Binding, _)`. A subclass object C\+\+ keeps stays alive (with its closures) while C\+\+ holds it, and comes back as the same OCaml value.
+- Lifetime: objects are custom blocks; the GC finalizer frees an owned object, `close` frees it now (later calls raise `Error (`Binding, _)`), passing an object to a `unique_ptr` parameter moves it to C\+\+ (the OCaml value is then closed) and `shared_ptr` shares it. Borrowed references keep their owner alive. Native calls hold the OCaml runtime lock: use a library from one domain at a time (systhreads are fine), and C\+\+ must not call back from threads OCaml did not create.
+- Documentation: `MODULE.mli` documents every value with odoc: the Doxygen brief and details (`[code]`, `{b ...}`, `{ul ...}` lists, `{@cpp[ ... ]}` code blocks, notes), `@param` per label, `@return`, `@raise` with the OCaml exception, `@see`, `@since`, `@deprecated`, the C\+\+ signature with its defaults, and how virtual methods dispatch. `odoc compile --warn-error` accepts it, and mep's OCaml language server reads the same `.mli` from the workspace, an `-I` directory, `OCAMLPATH`/findlib or `MEP_OCAML_PATH`. The `.ml` starts with the hidden runtime module `Rosetta__` and is compiled without warnings.
+- In CMake, use `rosetta_generate_ocaml(... OCAML_API full [OCAML_OUTPUT dir/MODULE.ml] PARTS N)`, build the sources (with the OCaml include directory) into `dllMODULE_stubs` and `libMODULE_stubs.a` in that directory, and compile the `.mli`, `.cma` and `.cmxa` as [OcamlExample.cmake|cmake/OcamlExample.cmake] does. The directory is then a findlib package: put its parent on `OCAMLPATH` for `ocamlfind` or dune (`(libraries MODULE)`).
+
+`tests/test_ocaml_full.ml` (ctest `ocaml_full_features`, 366 checks, native under a small minor heap, and `ocaml_full_features_bytecode` in the toplevel) exercises this on `examples/python_features.hpp` split in two sources; `tests/test_ocaml_full_names.ml` (ctest `ocaml_full_names`) covers keywords, Stdlib-shadowing names and conversions; `ocaml_full_docs` runs odoc over the `.mli` and `ocaml_full_findlib` builds the feature test through `ocamlfind`. All run under `just ocaml-test`; tested with OCaml 5.5 on Linux.
 
 >> Go
 
@@ -1131,6 +1377,49 @@ set_target_properties(library_stubs PROPERTIES POSITION_INDEPENDENT_CODE ON
 
 [GoExample.cmake|cmake/GoExample.cmake] shows the full build, including each package's `go.mod` and the `go.work`. Enable `ROSETTA_BUILD_GO_EXAMPLES` for the repository packages. Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Enums, containers, overloads, callbacks, class-valued/borrowed values, inheritance, Go interfaces and Windows link flags remain open. Tested with Go 1.26.3 on macOS (arm64); other platforms remain unverified.
 
+>>> Full Go API
+
+`--language go --go-api full` generates a library-shaped cgo module (planned like the full C#/Lisp backends on the shared C ABI layer) instead of the minimal package above: OUTPUT (split with `--parts N`) is the C\+\+ source of a shared library, and `--go-output DIR/PKG.go` is the main file of a Go module written with `DIR/go.mod`, `DIR/internal/rosetta` (the runtime) and one subpackage directory per policy module (`DIR/data/data.go` imports the parent package).
+
+```{sh, eval=false}
+rosetta api.hpp --language go --go-api full --module library --policy api.policy.json \
+  -o generated/library.cpp --parts 2 --go-output go/library/library.go \
+  [--go-package library] [--go-module-path example.com/library] [--go-library library]
+clang++ -std=c++17 -shared -fPIC generated/library*.cpp -o lib/liblibrary.so
+export CGO_LDFLAGS="-L$PWD/lib -Wl,-rpath,$PWD/lib"   # or LD_LIBRARY_PATH at run time
+```
+
+A program in another module requires the package and replaces it with its directory (no network: `GOFLAGS=-mod=mod GOPROXY=off`):
+
+```{sh, eval=false}
+# go.mod of the program
+module app
+go 1.24
+require library v0.0.0
+replace library => ../go/library
+```
+
+```{go, eval=false}
+c, err := library.NewCircle(2)            // constructors are NewX, results (T, error)
+if err != nil { return err }
+defer c.Close()                           // otherwise runtime.AddCleanup releases it
+area := library.Must(c.Area())            // Must panics on the error
+library.Add(1)                            // C++ defaults: Add(a), AddWithB(a, b), AddWithC(a, b, c)
+library.Apply(func(x float64) float64 { return 2 * x }, 21)
+t, _ := library.NewShapeFrom(&Triangle{B: 4, H: 3}) // Go implements C++ virtual methods
+var e *library.Error
+if _, err := library.Checked(-1); errors.As(err, &e) && e.Kind == library.DomainError { ... }
+```
+
+- Names: the package is `--go-package` (default MODULE), the module path `--go-module-path` (default the package), and cgo links `-l` plus `--go-library` (default MODULE). Exported names are PascalCase (`snake_case` → `SnakeCase`); parameters camelCase, with Go keywords and predeclared identifiers (`type`, `range`, `len`, `error`, ...) getting a trailing `_`. Collisions (`foo`/`Foo`, a class `Error`, a method `close` beside the generated `Close`) take the next free numeric suffix (`Foo2`, `Error2`, `Close2`) in declaration order. Static methods and class constants are `ClassMethod`/`ClassConst()`; fields are a getter `X()` and setter `SetX(v) error` (none when read-only); enumerators are typed constants `EnumLabel` with a `String` method returning the C\+\+ name. Operators are named methods (`Add`, `Sub`, `Equal`, `Less`, `At`, `Call`, `AddAssign`, ...; a free operator whose class operand is not first adds `R`).
+- Overloads: the overload with the fewest parameters keeps the name; each other one adds its distinguishing parameter names when they are unique (`NewVec2XY`), else its parameter types (`PickFloat64`, `PickShape`), else a number. Defaulted trailing parameters give the shorter variants, the longer ones adding `With` and the last parameter (`Add`, `AddWithB`, `AddWithC`). The godoc of each variant names the C\+\+ signature and links the others.
+- Classes are structs holding a handle; a derived class embeds its bases (so base methods are promoted), and each class X has an interface `XLike { AsX() *X }` that parameters taking a polymorphic X accept. `Cast[T](x)` returns the most-derived Go type (or the Go implementation of a director). `NewXFrom(impl)` creates a C\+\+ object whose virtual methods call `impl`'s methods of the same Go name; `impl` may embed `X`, which is then filled in so it can call the C\+\+ base. `Close` releases the C\+\+ object now (idempotent, `IsClosed`); later calls return an `*Error` of kind `BindingError`.
+- Types: integers are range checked (`int`, `int64`, `uint32`, `uint64`, `uint8`; `size_t` is `int`), floating point `float64`, `complex128`, strings, slices, `map[K]V`, sets `map[T]struct{}`, `Pair[A, B]`, `Tuple1`..`Tuple8`, optionals `*T` (nil for empty), `std::function` a Go func (returned functions too), non-const references `*T`. Errors are `*Error{Kind, Message, Err}` (usable with `errors.As`), kinds `InvalidArgument`, `OutOfRange`, `DomainError`, `LengthError`, `ArithmeticError`, `AllocationError`, `NativeError`, `CallbackError`, `BindingError`; a panic in a Go callback reaches the caller as `CallbackError` wrapping the panic. `noexcept` functions return T alone.
+- Documentation: Doxygen becomes godoc that starts with the name (`Add adds ...`, or `Scaled calls C++ ...`), with `# Headings`, indented code blocks, lists, "Parameters:", "It returns", the error kinds, the defaults, notes, deprecations and `[Name]` doc links; the package comment explains building, linking and the mapping. The files are gofmt-canonical and `go vet`-clean, so `go doc library.Add`, pkg.go.dev-style viewers and gopls (mep's Go server) read them directly.
+- In CMake, use `rosetta_generate_go(... GO_API full GO_OUTPUT dir/pkg.go [GO_PACKAGE p] [GO_MODULE_PATH m] [GO_LIBRARY l] PARTS N)` and build OUTPUT plus its parts into a SHARED library named after GO_LIBRARY.
+
+`tests/test_go_full.go` (ctest `go_full_features`, 316 checks, also under `-race`) exercises this on `examples/python_features.hpp` with PARTS 2; `tests/test_go_full_names.go` (ctest `go_full_names`, 58 checks) covers keywords, predeclared identifiers, capitalization collisions, underscores, the rarer types and director constructors with defaults and overloads; `go_full_doc_*` check `go doc` output, `go_full_vet_*` and `go_full_format` run `go vet` and `gofmt`. All run offline under `just go-test`; tested with Go 1.26 on Linux. Callbacks report failure by panicking (a Go func cannot return an `error` to C\+\+), map keys must be comparable Go types, and Go types satisfy C\+\+ classes only through `XLike` (no Go method-set interfaces are generated).
+
 >> APL
 
 Select APL with `--language apl`. One generation serves GNU APL and Dyalog APL: it writes C\+\+ with a C ABI, a GNU APL script `MODULE.apl` and a Dyalog namespace script `MODULE.apln` (beside the output, or `--gnu-apl-output` and `--dyalog-output`). Both scripts load their libraries from `--apl-library-dir` (default `.`). Compiled alone, the C\+\+ is `libMODULE_apl.so`, which Dyalog calls through `⎕NA`. Compiled with `-DROSETTA_GNU_APL` against a configured GNU APL source tree, it is `libMODULE_gnu_apl.so`, a GNU APL native function that calls the same C ABI. GNU APL native functions use the interpreter's own C\+\+ headers, so `ROSETTA_GNU_APL_SOURCE_DIR` must name a source tree of the installed version on which `./configure` has run. The Nix shells set it on Linux; on macOS, where nixpkgs' GNU APL is marked broken, install `apl` (for example with Homebrew) and configure its source yourself. Generation needs neither APL.
@@ -1198,6 +1487,47 @@ set_target_properties(library_apl PROPERTIES PREFIX "lib" SUFFIX ".so")
 ```
 
 [AplExample.cmake|cmake/AplExample.cmake] also builds the GNU APL library. Enable `ROSETTA_BUILD_GNU_APL_EXAMPLES` or `ROSETTA_BUILD_DYALOG_EXAMPLES` for the repository libraries. Unsupported declarations fail generation, or produce diagnostics and partial output under `--skip-unsupported`. Enums, arrays and containers, overloads, callbacks, class-valued/borrowed values, inheritance and Windows remain open. GNU APL 2.0 is tested on macOS (arm64), and the bindings compile against GNU APL 1.9's headers; the Dyalog front end has not yet run under Dyalog, though its C ABI is exercised through the GNU APL bridge.
+
+>>> Full APL API
+
+`--language apl --apl-api full` generates a library-shaped GNU APL binding (planned like the full C#/Octave backends on the shared C ABI layer) instead of the minimal one above: C\+\+ for one GNU APL native function, `libMODULE_gnu_apl.so`, compiled against GNU APL's configured headers (`ROSETTA_GNU_APL_SOURCE_DIR`, as above), and a GNU APL script `MODULE.apl` that fixes it with `⎕FX` and defines one documented function per C\+\+ function, constructor, method, field, operator, enumerator and constant. It targets GNU APL only (tested with GNU APL 1.9 on Linux); there is no Dyalog script.
+
+```{sh, eval=false}
+rosetta api.hpp --language apl --apl-api full --module library --apl-prefix lib --policy api.policy.json \
+  -o generated/library.cpp --parts 4 --apl-library-dir "$PWD/generated"
+clang++ -std=c++17 -shared -fPIC -DHAVE_CONFIG_H generated/library*.cpp -o generated/liblibrary_gnu_apl.so \
+  -isystem "$ROSETTA_GNU_APL_SOURCE_DIR" -isystem "$ROSETTA_GNU_APL_SOURCE_DIR/src"
+apl --script -f generated/library.apl -f main.apl    # or )COPY the script; LIBRARY_APL_LIBRARY overrides the .so path
+```
+
+```{apl, eval=false}
+C←lib∆Circle∆new 2                 ⍝ a handle: ('Circle' 1)
+lib∆Circle∆area C                  ⍝ 12; C++ virtual dispatch
+lib∆add 1 2                        ⍝ the right argument is the vector of arguments; trailing defaults may go
+lib∆pick 1.5                       ⍝ overloads resolve at run time: 'double'
+lib∆scale (1 2 3) 2                ⍝ updated reference arguments come back: 2 4 6
+lib∆count_words 'a' 'bb' 'a'       ⍝ maps are 2-column matrices
+∇Z←DBL X
+ Z←2×X
+∇
+lib∆apply (lib∆fn 'DBL') 3         ⍝ std::function: a function reference; 6
+∇Z←H Ten∆visit B
+ Z←10×B
+∇
+V←'Ten' lib∆Visitor∆subclass ⍬     ⍝ APL implementations of virtual methods (Ten∆visit)
+lib∆Delete C V                     ⍝ explicit lifetime
+```
+
+- Names: GNU APL has no namespaces, so every name starts with `PREFIX∆` (`--apl-prefix`, default the module): `PREFIX∆f`, `PREFIX∆sub∆f` for policy modules, `PREFIX∆Class∆new`, `PREFIX∆Class∆method`, field getters `PREFIX∆Class∆field` and setters `PREFIX∆Class∆field∆set`, class constants `PREFIX∆Class∆NAME`, operators `PREFIX∆Class∆plus`, enumerators `PREFIX∆Enum∆name` (and `PREFIX∆Enum`, a names/values matrix), constants `PREFIX∆name`. C\+\+ identifiers are APL names as they are (case matters: `value` and `Value` differ); `∆` never occurs in them, so joined names cannot collide. C\+\+ names equal to the runtime's (`Delete fn call last_error live`) or to a generated name (`subclass`, an operator's name) get a trailing `_` (`Words∆op∆plus` when a method `plus` exists).
+- Calling convention: a function's right argument is its one argument when every overload takes exactly one (`lib∆pick 1 2.5` passes a vector); otherwise the vector of its arguments, where a scalar, a character vector, a handle or a function reference alone is one argument and `⍬` none. Nest vectors in an argument vector (`lib∆find (1 2 3) 2`). Methods take the object on the left (`P lib∆Vec2∆plus Q`), or on the right without parameters (`lib∆Circle∆area C`); niladic functions take nothing. Overloads and defaults resolve at run time in C\+\+ (integers prefer integer overloads, `0`/`1` also convert to `bool`); wrong arguments report the signatures. Operators map to `plus minus negate times divide mod eq ne lt le gt ge not and or at call` (`at` is `operator[]` with C\+\+ indices).
+- Conversions: numbers are APL numbers (integers range-checked; integral floats accepted; `uint64` beyond 2⁶³ becomes a float), `bool` 0/1, `char` and strings character vectors (UTF-8), complex numbers APL complex (`1J2`). Vectors are vectors (strings: nested character vectors), nested numeric vectors of one length come back as matrices (matrices are accepted as their rows), sets sorted vectors, maps 2-column matrices of keys and values (a vector of pairs is accepted), pairs and tuples nested vectors, `optional` and null pointers `⍬`, variants any alternative. Enums are numbers; arguments also accept the enumerator's name (`lib∆filled 'solid'`).
+- Objects: handles `('Class' id)`, checked on every call; results through a base class get the most-derived class. GNU APL has no finalizers, so lifetime is explicit: `PREFIX∆Delete h` (or a vector of handles) destroys objects APL owns, and `PREFIX∆live` counts live handles. A borrowed reference (a member, `*this`) keeps the object it lives in alive until it is deleted too; ownership moves into C\+\+ for `unique_ptr` parameters, after which the handle reports `closed`. `)CLEAR` destroys every object.
+- Callbacks: `std::function` parameters take a function reference `PREFIX∆fn 'NAME'` (that is `('⍙fn' 'NAME')`): C\+\+ calls the defined function `NAME` re-entrantly under `⎕EC` with the same argument convention. `'Impl' PREFIX∆Class∆subclass args` creates an object of a class with virtual methods whose overrides are the defined functions `Impl∆method` (called `Z←obj Impl∆method args`); methods without one run the C\+\+ implementation, also when C\+\+ owns the object. Returned `std::function`s are `('NativeFunction' id)` handles called with `f PREFIX∆call args`. APL errors in callbacks become C\+\+ exceptions and signal again, with their own event, once back in APL.
+- Errors: C\+\+ exceptions signal with `⎕ES` from the generated function: DOMAIN ERROR (INDEX ERROR for `out_of_range`, LENGTH ERROR for `length_error`, WS FULL for `bad_alloc`) with the message `PREFIX: kind: what` (`invalid_argument`, `out_of_range`, `arithmetic_error`, `binding`, `callback`, `native`, ...). `PREFIX∆last_error` returns the latest `(kind message)`, since `⎕EC` reports only the event.
+- Documentation: every function carries `⍝` lines right after its header (Markdown: summary, description, usage forms, arguments with APL types and defaults, result, errors, notes, the C\+\+ signatures and see-also), converted from Doxygen; undocumented overrides take the base method's comment. `⎕CR` shows it, and mep's APL server reads it for hover and `mep-apl-lsp --doc PREFIX∆Circle∆area` from the workspace or `MEP_APL_PATH`.
+- In CMake, use `rosetta_generate_apl(... APL_API full [APL_PREFIX P] [APL_LIBRARY_DIR DIR] PARTS N)` and build OUTPUT and its parts into a MODULE library named `libMODULE_gnu_apl.so` with `HAVE_CONFIG_H` and GNU APL's headers ([AplExample.cmake|cmake/AplExample.cmake] shows the targets).
+
+`tests/test_apl_full.apl` (ctest `apl_full_features`, 110 checks) exercises this on `examples/python_features.hpp` with PARTS 2; `tests/test_apl_full_names.apl` (ctest `apl_full_names`, 70 checks) covers name rules, value conversions, error kinds and callbacks; `apl_full_docs` checks that the script loads cleanly and documents every function, and `apl_full_mep_doc` (when `mep-apl-lsp` is found) that mep shows the documentation. All run under `just apl-test`. Calls from threads GNU APL did not create, Dyalog APL, and passing a returned `std::function` back into C\+\+ are unsupported.
 
 >> COBOL
 

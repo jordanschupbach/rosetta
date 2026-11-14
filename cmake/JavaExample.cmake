@@ -77,5 +77,59 @@ if(ROSETTA_BUILD_JAVA_EXAMPLES)
         endforeach()
         add_test(NAME java_example COMMAND "${Java_JAVA_EXECUTABLE}" -Xcheck:jni
             "-Djava.library.path=$<TARGET_FILE_DIR:rosetta_java_demo>" -cp "${java_api_jar}" JavaExample)
+        # The full Java API (--java-api full): python_features (shared with Python, Lua, Lisp, Julia
+        # and C#, in two translation units) and the Java name collisions. Each package's sources go
+        # under full/<name>/src; package-info.java is the declared output of the generation.
+        find_program(ROSETTA_JAVADOC_EXECUTABLE javadoc HINTS "${java_bin}" REQUIRED)
+        foreach(full features names)
+            set(full_dir "${java_generated}/full/${full}")
+            if(full STREQUAL "features")
+                set(full_package features)
+                set(full_header "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.hpp")
+                set(full_policy "${CMAKE_CURRENT_SOURCE_DIR}/examples/python_features.policy.json")
+                set(full_include "${CMAKE_CURRENT_SOURCE_DIR}/examples")
+                set(full_test TestJavaFull)
+                set(full_parts PARTS 2)
+                set(full_sources "${full_dir}/${full_package}.cpp" "${full_dir}/${full_package}_1.cpp")
+            else()
+                set(full_package jnames)
+                set(full_header "${CMAKE_CURRENT_SOURCE_DIR}/tests/java_full_names.hpp")
+                set(full_policy "${CMAKE_CURRENT_SOURCE_DIR}/tests/java_full_names.policy.json")
+                set(full_include "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+                set(full_test TestJavaNames)
+                set(full_parts)
+                set(full_sources "${full_dir}/${full_package}.cpp")
+            endif()
+            rosetta_generate_java(HEADER "${full_header}" MODULE ${full_package}
+                CLANG "${ROSETTA_CLANG_EXECUTABLE}" OUTPUT "${full_dir}/${full_package}.cpp"
+                JAVA_OUTPUT "${full_dir}/src" POLICY "${full_policy}" JAVA_API full ${full_parts})
+            add_library(rosetta_java_full_${full} MODULE ${full_sources})
+            set_target_properties(rosetta_java_full_${full} PROPERTIES OUTPUT_NAME ${full_package}
+                LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/java-full")
+            target_include_directories(rosetta_java_full_${full} SYSTEM PRIVATE ${JNI_INCLUDE_DIRS})
+            target_include_directories(rosetta_java_full_${full} PRIVATE "${full_include}")
+            target_compile_features(rosetta_java_full_${full} PRIVATE cxx_std_17)
+            target_link_libraries(rosetta_java_full_${full} PRIVATE Threads::Threads)
+            set(full_classes "${CMAKE_CURRENT_BINARY_DIR}/java-full/${full}-classes")
+            set(full_stamp "${CMAKE_CURRENT_BINARY_DIR}/java-full/${full}.stamp")
+            add_custom_command(OUTPUT "${full_stamp}"
+                COMMAND "${CMAKE_COMMAND}" -E rm -rf "${full_classes}"
+                COMMAND "${CMAKE_COMMAND}" -E make_directory "${full_classes}"
+                COMMAND "${Java_JAVAC_EXECUTABLE}" --release 17 -Xlint:all -Werror -d "${full_classes}"
+                    -sourcepath "${full_dir}/src" "${CMAKE_CURRENT_SOURCE_DIR}/tests/${full_test}.java"
+                COMMAND "${CMAKE_COMMAND}" -E touch "${full_stamp}"
+                DEPENDS "${full_dir}/src/${full_package}/package-info.java"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/${full_test}.java" VERBATIM)
+            add_custom_target(rosetta_java_full_${full}_classes ALL DEPENDS "${full_stamp}" rosetta_java_full_${full})
+            add_test(NAME java_full_${full} COMMAND "${Java_JAVA_EXECUTABLE}" -Xcheck:jni
+                "-D${full_package}.library=$<TARGET_FILE:rosetta_java_full_${full}>" -cp "${full_classes}"
+                ${full_test} "${full_dir}/src")
+            set_tests_properties(java_full_${full} PROPERTIES TIMEOUT 60
+                FAIL_REGULAR_EXPRESSION "WARNING in native method;FATAL ERROR in native method")
+            # The generated Javadoc passes doclint without warnings.
+            add_test(NAME java_full_${full}_javadoc COMMAND "${ROSETTA_JAVADOC_EXECUTABLE}" -Xdoclint:all -Werror -quiet
+                -d "${CMAKE_CURRENT_BINARY_DIR}/java-full/${full}-doc" -sourcepath "${full_dir}/src" -subpackages ${full_package})
+            set_tests_properties(java_full_${full}_javadoc PROPERTIES TIMEOUT 120)
+        endforeach()
     endif()
 endif()

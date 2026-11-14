@@ -35,20 +35,29 @@ add_library(rosetta_core
     src/python.cpp
     src/r6.cpp
     src/ruby.cpp
+    src/ruby_full.cpp
     src/octave.cpp
+    src/octave_full.cpp
     src/julia.cpp
     src/julia_full.cpp
     src/cabi_full.cpp
     src/csharp_full.cpp
     src/fortran.cpp
+    src/fortran_full.cpp
     src/csharp.cpp
     src/java.cpp
+    src/java_full.cpp
     src/common_lisp.cpp
     src/tcl.cpp
+    src/tcl_full.cpp
     src/guile.cpp
+    src/guile_full.cpp
     src/ocaml.cpp
+    src/ocaml_full.cpp
     src/go.cpp
+    src/go_full.cpp
     src/apl.cpp
+    src/apl_full.cpp
     src/cobol.cpp
     src/cobol_full.cpp
     src/cli.cpp
