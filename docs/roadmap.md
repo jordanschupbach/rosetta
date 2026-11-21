@@ -316,6 +316,32 @@ JavaScript emits a Node-API addon and TypeScript declarations from the shared mo
 
 Next gates: calls from non-JavaScript threads (thread-safe functions), async/Promise mappings, zero-copy typed-array views, macOS and Windows.
 
+## Perl verification
+
+Perl (`--language perl`, [perl_full.cpp](../src/perl_full.cpp), runtime [perl_full_runtime.hpp](../src/perl_full_runtime.hpp)) is a `CabiGenerator` target writing one Perl 5.14+ module over the C ABI library, which carries an XS glue loaded with `DynaLoader` (no CPAN modules). It binds classes as packages with multiple inheritance through `@ISA`, Perl subclasses overriding virtual methods (directors), overloads resolved in C++ with numeric strings and numbers converting in the lenient pass, default arguments (only passed arguments cross), accessors, operators through `use overload`, enumerations as constants, containers as array and hash references, code references both ways, written-back reference parameters (variables, scalar references, arrays in place), exact unsigned 64-bit values, error objects with caller locations, policy submodules as packages, `--parts` and POD from Doxygen. `just perl-test` runs [test_perl_full.pl](../tests/test_perl_full.pl) (316 checks, ctest `perl_full_features`), [test_perl_names.pl](../tests/test_perl_names.pl) (39 checks, ctest `perl_full_names`: builtins as names, the runtime's names, reserved subs, a renamed virtual method, multiple inheritance, hiding, operators, 64-bit values), `perl -c` and `podchecker` on both modules and [test_perl_capabilities.cpp](../tests/test_perl_capabilities.cpp) (generator and CLI, ctest `perl_capabilities`). Validation: Perl 5.42.3 (threaded) and Clang 21 on Linux (2026-11-20).
+
+Not yet bound for Perl: reflected operators (`2 * $v`; the frontend does not read free operator functions), tied arrays for `operator[]` (it is the `at` method), iteration over C++ containers (containers are copied), and C++ threads calling Perl callbacks (a thread without a Perl interpreter gets an error).
+
+## PHP verification
+
+PHP (`--language php`, [php_full.cpp](../src/php_full.cpp), runtime [php_full_runtime.hpp](../src/php_full_runtime.hpp)) is a `CabiGenerator` target writing one PHP 8.1+ file that loads the C ABI library through the FFI extension. It binds classes with inheritance and PHP subclasses overriding virtual methods (directors), overloads as union-typed methods resolved in C++, default arguments (only passed arguments cross), properties, operators (`ArrayAccess`, `__toString`, `__invoke`), backed enums, containers, callables both ways, by-reference write-back, SPL-derived exceptions, policy submodules as namespaces, `--parts` and PHPDoc from Doxygen. `just php-test` runs [test_php_full.php](../tests/test_php_full.php) (306 checks, ctest `php_full_features`), [test_php_names.php](../tests/test_php_names.php) (29 checks, ctest `php_full_names`: reserved words, case-insensitive names, the runtime's names, incompatible hiding, multiple inheritance), `php -l` on both files and [test_php_capabilities.cpp](../tests/test_php_capabilities.cpp) (generator and CLI, ctest `php_capabilities`). Validation: PHP 8.4.26 with FFI and Clang 21 on Linux (2026-11-20).
+
+Not yet bound for PHP: writable `operator[]` (`offsetSet` throws), iteration over C++ containers (containers are copied), and C++ threads calling PHP callbacks (PHP's NTS build is single-threaded; such a call is undefined).
+
+## Rust verification
+
+Rust (`--language rust`, [rust_full.cpp](../src/rust_full.cpp), runtime [rust_full_runtime.hpp](../src/rust_full_runtime.hpp)) is a `CabiGenerator` target that writes a Cargo crate with no dependencies. It binds classes (structs with `Deref` to their primary base, `as_base()`/`From` for every ancestor, `cast`), Rust implementations of virtual methods through per-class traits and `from_impl` (C++ calls them; calls from Rust dispatch to them; `this` reaches the C++ implementation), overloads and defaults as distinct names, operators, fields, enums as newtypes, containers, tuples, `Option`, closures both ways, `&mut` write-back, policy submodules, `--parts` and rustdoc from Doxygen. Generated crates build with `-D warnings`, and `cargo doc` runs with warnings as errors. `just rust-test` builds and runs [test_rust_full.rs](../tests/test_rust_full.rs) (320 checks, ctest `rust_full_features`), [test_rust_names.rs](../tests/test_rust_names.rs) (31 checks, ctest `rust_full_names`: prelude and runtime type names, keywords, generated member names, multiple inheritance), the two rustdoc checks and [test_rust_capabilities.cpp](../tests/test_rust_capabilities.cpp) (generator and CLI, ctest `rust_capabilities`). Validation: rustc 1.97.1 and Clang 21 on Linux (2026-11-20).
+
+Not yet bound for Rust: `std::ops` trait implementations for C++ operators (they are named methods), and Rust iterators over C++ containers (containers are copied).
+
+## Visual Basic verification
+
+Visual Basic (`--language visual-basic`, [vb_full.cpp](../src/vb_full.cpp), runtime [vb_full_runtime.hpp](../src/vb_full_runtime.hpp)) is another `CabiGenerator` target: the full C# backend's planning, C++ library and runtime design, emitted as VB.NET. It binds classes with inheritance and `Overridable` methods VB subclasses override (directors), overloads and defaults, operators and `Default` properties, properties, enums, containers, tuples, `Func`/`Action` callbacks both ways, policy submodules, `--parts` and XML documentation from Doxygen. Generated files compile with `Option Strict On` and no warnings. `just vb-test` builds and runs [TestVBFull.vb](../tests/TestVBFull.vb) (287 checks, ctest `vb_full_features`, the C# suite's checks), [TestVBNames.vb](../tests/TestVBNames.vb) (26 checks, ctest `vb_full_names`: .NET type names, keywords, case-insensitive names, `Overloads`/`Shadows`) and [test_vb_capabilities.cpp](../tests/test_vb_capabilities.cpp) (generator and CLI, ctest `vb_capabilities`). Validation: .NET SDK 10.0.401 and Clang 21 on Linux (2026-11-20).
+
+VB-specific contracts: case-insensitive collisions (classes whose names differ only in case are reported, enumerators get a `_` suffix), enums exchanged by value, keywords in brackets, and overrides that keep the base result type (VB has no covariant returns, so a narrowed result is `Overloads Overridable` instead).
+
+Next gates: a minimal (scalar/owned-handle) style if one is needed, a README runner shell, datamunge bindings, macOS and Windows.
+
 ## Milestones
 
 | Phase | Work | Completion criteria |

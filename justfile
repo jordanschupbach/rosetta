@@ -325,6 +325,46 @@ _csharp-demo:
     cmake -S . -B {{build_dir}}/csharp-demo -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DROSETTA_BUILD_JULIA_EXAMPLES=OFF -DROSETTA_BUILD_JAVA_EXAMPLES=OFF -DROSETTA_BUILD_FORTRAN_EXAMPLES=OFF -DROSETTA_BUILD_CSHARP_EXAMPLES=ON -DBUILD_TESTING=OFF
     cmake --build {{build_dir}}/csharp-demo --parallel --target csharp-demo
 
+# Build Visual Basic bindings and run the .NET verification suite.
+vb-test:
+    nix develop path:. --command just _vb-test
+
+[private]
+_vb-test:
+    cmake -S . -B {{build_dir}}/vb-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DROSETTA_BUILD_JULIA_EXAMPLES=OFF -DROSETTA_BUILD_JAVA_EXAMPLES=OFF -DROSETTA_BUILD_FORTRAN_EXAMPLES=OFF -DROSETTA_BUILD_CSHARP_EXAMPLES=OFF -DROSETTA_BUILD_VB_EXAMPLES=ON -DBUILD_TESTING=ON
+    cmake --build {{build_dir}}/vb-tests --parallel
+    ctest --test-dir {{build_dir}}/vb-tests --output-on-failure --parallel
+
+# Enter Nix and build and run the Rust crates' tests (cargo, offline), rustdoc checks and the capability tests.
+rust-test:
+    nix develop path:. --command just _rust-test
+
+[private]
+_rust-test:
+    cmake -S . -B {{build_dir}}/rust-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DROSETTA_BUILD_JULIA_EXAMPLES=OFF -DROSETTA_BUILD_JAVA_EXAMPLES=OFF -DROSETTA_BUILD_FORTRAN_EXAMPLES=OFF -DROSETTA_BUILD_CSHARP_EXAMPLES=OFF -DROSETTA_BUILD_VB_EXAMPLES=OFF -DROSETTA_BUILD_RUST_EXAMPLES=ON -DROSETTA_WARNINGS_AS_ERRORS=ON -DBUILD_TESTING=ON
+    cmake --build {{build_dir}}/rust-tests --parallel
+    ctest --test-dir {{build_dir}}/rust-tests --output-on-failure --parallel
+
+# Enter Nix and run the Perl APIs' tests (the XS glue built with Perl's headers), compile and POD checks and the capability tests.
+perl-test:
+    nix develop path:. --command just _perl-test
+
+[private]
+_perl-test:
+    cmake -S . -B {{build_dir}}/perl-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DROSETTA_BUILD_JULIA_EXAMPLES=OFF -DROSETTA_BUILD_JAVA_EXAMPLES=OFF -DROSETTA_BUILD_FORTRAN_EXAMPLES=OFF -DROSETTA_BUILD_CSHARP_EXAMPLES=OFF -DROSETTA_BUILD_VB_EXAMPLES=OFF -DROSETTA_BUILD_RUST_EXAMPLES=OFF -DROSETTA_BUILD_PHP_EXAMPLES=OFF -DROSETTA_BUILD_PERL_EXAMPLES=ON -DROSETTA_WARNINGS_AS_ERRORS=ON -DBUILD_TESTING=ON
+    cmake --build {{build_dir}}/perl-tests --parallel
+    ctest --test-dir {{build_dir}}/perl-tests --output-on-failure --parallel
+
+# Enter Nix and run the PHP APIs' tests (PHP with FFI), lint checks and the capability tests.
+php-test:
+    nix develop path:. --command just _php-test
+
+[private]
+_php-test:
+    cmake -S . -B {{build_dir}}/php-tests -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_COMPILER=clang++ -DROSETTA_BUILD_EXAMPLES=OFF -DROSETTA_BUILD_R_EXAMPLES=OFF -DROSETTA_BUILD_PYTHON_EXAMPLES=OFF -DROSETTA_BUILD_RUBY_EXAMPLES=OFF -DROSETTA_BUILD_OCTAVE_EXAMPLES=OFF -DROSETTA_BUILD_JULIA_EXAMPLES=OFF -DROSETTA_BUILD_JAVA_EXAMPLES=OFF -DROSETTA_BUILD_FORTRAN_EXAMPLES=OFF -DROSETTA_BUILD_CSHARP_EXAMPLES=OFF -DROSETTA_BUILD_VB_EXAMPLES=OFF -DROSETTA_BUILD_RUST_EXAMPLES=OFF -DROSETTA_BUILD_PHP_EXAMPLES=ON -DROSETTA_WARNINGS_AS_ERRORS=ON -DBUILD_TESTING=ON
+    cmake --build {{build_dir}}/php-tests --parallel
+    ctest --test-dir {{build_dir}}/php-tests --output-on-failure --parallel
+
 # Build Fortran bindings and run runtime, capability and tooling checks.
 fortran-test:
     nix develop path:. --command just _fortran-test

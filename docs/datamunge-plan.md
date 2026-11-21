@@ -52,6 +52,10 @@ A language is checked off when every item below holds.
 | Go | ✅ (godoc, cgo) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (`go run`) | ✅ |
 | OCaml | ✅ (odoc `.mli`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (`ocaml`) | ✅ |
 | APL (GNU, Dyalog) | ✅ (GNU native `⎕FX`, `⍝` docs; Dyalog not done) | ☐ (none) | ✅ | ✅ | ✅ (written) | ☐ | ✅ (`apl --script`) | ✅ |
+| Visual Basic | ✅ (XML doc comments, `.vbproj`) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
+| Rust | ✅ (rustdoc, Cargo crate) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
+| PHP | ✅ (PHPDoc, one file over FFI) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
+| Perl | ✅ (POD, module over XS glue) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 
 "Run button ✅" above means only that mep has a default for the file extension. Each language still has to show that a datamunge example runs from its `CMD:` header.
 

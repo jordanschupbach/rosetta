@@ -264,6 +264,12 @@
           pkgs.ocamlPackages.findlib
           pkgs.ocamlPackages.odoc
           pkgs.go
+          # The Rust crates (cmake/RustExample.cmake).
+          pkgs.rustc
+          pkgs.cargo
+          # PHP with the FFI extension (cmake/PhpExample.cmake).
+          (pkgs.php.withExtensions ({ enabled, all }: enabled ++ [ all.ffi ]))
+          pkgs.perl
           rWithR6
         ]
         ++ gnuApl

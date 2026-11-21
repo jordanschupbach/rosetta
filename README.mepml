@@ -1,8 +1,8 @@
 > Rosetta
 
-Rosetta generates source code that connects C\+\+ libraries to other languages through their native extension or FFI APIs. Lua uses a Lua 5.4 C API module loaded with `require`; R uses a native `.Call` bridge with R6, S3 or S4 interfaces; Python and Ruby use native extensions with owned classes; JavaScript uses a Node-API addon with TypeScript declarations; Octave uses native `.oct` modules with owned objects; Julia uses a generated `ccall` module and C ABI shared library; Java uses compiled Java classes and JNI libraries; C# uses generated .NET APIs and C ABI libraries; Fortran uses generated `ISO_C_BINDING` modules and C ABI libraries; Common Lisp uses a generated CFFI package and C ABI shared library; Tcl uses Tcl 9 stub-enabled extensions with object commands; Guile Scheme uses libguile extensions loaded by a generated module; OCaml uses C stubs declared as externals in a generated module, for both bytecode and native code; Go uses cgo packages that call C\+\+ stubs in a static archive; APL uses a C ABI library that Dyalog calls through `⎕NA` and GNU APL through a generated native function; COBOL uses generated copybooks of parameter records passed to C\+\+ stubs.
+Rosetta generates source code that connects C\+\+ libraries to other languages through their native extension or FFI APIs. Lua uses a Lua 5.4 C API module loaded with `require`; R uses a native `.Call` bridge with R6, S3 or S4 interfaces; Python and Ruby use native extensions with owned classes; JavaScript uses a Node-API addon with TypeScript declarations; Octave uses native `.oct` modules with owned objects; Julia uses a generated `ccall` module and C ABI shared library; Java uses compiled Java classes and JNI libraries; C# uses generated .NET APIs and C ABI libraries; Visual Basic uses generated VB.NET classes over the same kind of C ABI library; Rust uses a generated Cargo crate over the same kind of C ABI library; PHP uses a generated PHP file that loads the same kind of C ABI library through the FFI extension; Perl uses a generated module over the same kind of C ABI library, which carries a small XS glue loaded with DynaLoader; Fortran uses generated `ISO_C_BINDING` modules and C ABI libraries; Common Lisp uses a generated CFFI package and C ABI shared library; Tcl uses Tcl 9 stub-enabled extensions with object commands; Guile Scheme uses libguile extensions loaded by a generated module; OCaml uses C stubs declared as externals in a generated module, for both bytecode and native code; Go uses cgo packages that call C\+\+ stubs in a static archive; APL uses a C ABI library that Dyalog calls through `⎕NA` and GNU APL through a generated native function; COBOL uses generated copybooks of parameter records passed to C\+\+ stubs.
 
-Rosetta itself is implemented in C\+\+17, built with CMake, and tested with C\+\+, Lua, R, Python, JavaScript, Ruby, Octave, Julia, Java, C#, Fortran, Common Lisp, Tcl, Guile Scheme, OCaml, Go, GNU APL and COBOL. This is a working prototype. It parses real C\+\+ with Clang, keeps declarations in a shared model, and emits native bindings. Its long-term goal is coverage of every C\+\+ feature through a native mapping, an explicit adapter, a concrete instantiation, or an opaque handle. An unrestricted C\+\+ program cannot automatically have an equivalent interface in every language; ownership, specialization, and runtime policies sometimes need user input.
+Rosetta itself is implemented in C\+\+17, built with CMake, and tested with C\+\+, Lua, R, Python, JavaScript, Ruby, Octave, Julia, Java, C#, Visual Basic, Rust, PHP, Perl, Fortran, Common Lisp, Tcl, Guile Scheme, OCaml, Go, GNU APL and COBOL. This is a working prototype. It parses real C\+\+ with Clang, keeps declarations in a shared model, and emits native bindings. Its long-term goal is coverage of every C\+\+ feature through a native mapping, an explicit adapter, a concrete instantiation, or an opaque handle. An unrestricted C\+\+ program cannot automatically have an equivalent interface in every language; ownership, specialization, and runtime policies sometimes need user input.
 
 The Lua feature-family demo is complete through generated bindings and explicit native/Lua adapters. See the [feature coverage plan|docs/lua-feature-plan.md] for each contract and the [completion audit|docs/lua-coverage-audit.md] for implementation, test evidence and remaining product work.
 
@@ -95,6 +95,10 @@ Development commands:
 | `just java-demo` | Enter Nix and compile/run the Java example |
 | `just csharp-test` | Enter Nix and compile/test C# APIs, native libraries and shared compiler/build checks |
 | `just csharp-demo` | Enter Nix and compile/run the C# example |
+| `just vb-test` | Enter Nix and compile/test Visual Basic APIs, native libraries and shared compiler/build checks |
+| `just rust-test` | Enter Nix and build/test the Rust crates (cargo, offline), rustdoc checks and generator/CLI checks |
+| `just php-test` | Enter Nix and test the PHP APIs (PHP with FFI), lint checks and generator/CLI checks |
+| `just perl-test` | Enter Nix and test the Perl APIs, `perl -c` and POD checks and generator/CLI checks |
 | `just fortran-test` | Enter Nix and compile/test Fortran modules, native libraries and shared compiler/build checks |
 | `just fortran-demo` | Enter Nix and compile/run the Fortran example |
 | `just r-repl` | Enter Nix and start R with R6, S3 and S4 demos and feature bindings loaded |
@@ -807,6 +811,169 @@ dotnet build generated/Library.csproj
 - `--csharp-project PATH` writes a .NET 10 `.csproj`; `--csharp-library NAME` names the native library. It is found through the `MODULE_CSHARP_LIBRARY` environment variable, beside the application or assembly, or in `lib/` or `../lib`. In CMake, use `rosetta_generate_csharp(... CSHARP_API full CSHARP_PROJECT ... PARTS N)`.
 
 `tests/TestCSharpFull.cs` (ctest `csharp_full_features`) exercises all of this on `examples/python_features.hpp`; datamunge's C# bindings use it.
+
+>> Visual Basic
+
+`--language visual-basic` (also `vb`) generates a Visual Basic (VB.NET) API over the shared C ABI library: the same planning, C\+\+ library and runtime design as the full C# API above, written as Visual Basic. There is one binding style, so there is no `--vb-api` option. Run `just vb-test` for the runtime, names, capability and CLI tests.
+
+```{sh, eval=false}
+rosetta api.hpp --language visual-basic --module library --policy api.policy.json \
+  -o generated/library.cpp --vb-output generated/Library.vb --vb-project generated/Library.vbproj --parts 4
+clang++ -std=c++17 -shared -fPIC generated/library*.cpp -o generated/liblibrary.so
+dotnet build generated/Library.vbproj
+```
+
+```{vb, eval=false}
+Imports Features
+Imports Features.Functions
+
+Class Triangle
+    Inherits Shape
+    Public Overrides Function Area() As Double
+        Return 6
+    End Function
+End Class
+
+Module Program
+    Sub Main()
+        Using c As New Circle(2)
+            Console.WriteLine(c.Area() & " " & AreaOf(New Triangle()))  ' C++ calls the VB override
+        End Using
+    End Sub
+End Module
+```
+
+- Classes inherit `NativeObject` (`IDisposable`), and C\+\+ inheritance is VB inheritance; a secondary base is a `Widening` conversion. Names are PascalCase, fields are properties, module functions are `Shared` members of the class `Functions` (`--vb-functions`), and policy submodules are classes of their own. The namespace defaults to the module name in PascalCase (`--vb-namespace`); it is declared as `Namespace Global.Name`, so a project's `RootNamespace` does not move it.
+- Virtual C\+\+ methods are `Overridable`. A VB subclass `Overrides` them; C\+\+ calls the override, and `MyBase.Area()` calls the native method. A member whose name a base class also declares is `Overloads` (hiding by signature, so the base overloads stay visible), or `Shadows` when a property hides a method.
+- Overloads are resolved at run time in C\+\+; default arguments become one overload per arity. Mutable references are `ByRef` parameters.
+- Operators are VB operators: `==` is `=`, `!=` `<>`, `%` `Mod`, `&` `And`, `|` `Or`, `^` `Xor`, `!`/`~` `Not`; comparison partners are synthesized, and `=`/`<>` compare `Nothing` by reference. `operator[]` is the `Default` property `Item` (`Element` if a member is already named `Item`), `operator()` `Invoke`, and `to_string()` overrides `ToString()`.
+- Containers, tuples, `Func`/`Action` delegates, `System.Numerics.Complex`, `NativeException` and XML documentation comments are as in C#. `T?` (`Nullable`) is used only for value types.
+- Visual Basic names are case-insensitive: two C\+\+ classes whose names differ only in case collide (with `"names": "flat"` the second one is skipped and reported); enumerators that differ only in case get a `_` suffix and cross the boundary by value, as all enums do; parameters are renamed rather than shadow the function or the runtime (`size_`). VB keywords are escaped with brackets (`[End]`, `[Next]`), and generated files compile with `Option Strict On`.
+- `--vb-project PATH` writes a .NET 10 `.vbproj`; `--vb-library NAME` names the native library, found through `MODULE_VB_LIBRARY`, beside the application or assembly, or in `lib/` or `../lib`. In CMake, use `rosetta_generate_visual_basic(HEADER ... MODULE ... OUTPUT ... VB_OUTPUT ... VB_PROJECT ... PARTS N)`.
+
+`tests/TestVBFull.vb` (ctest `vb_full_features`, 287 checks) runs the C# suite's checks on `examples/python_features.hpp`; `tests/TestVBNames.vb` (ctest `vb_full_names`) covers .NET type names, keywords, case-insensitive names and inherited member names, and `tests/test_vb_capabilities.cpp` the generator and CLI.
+
+>> Rust
+
+`--language rust` (also `rs`) generates a Cargo crate over the shared C ABI library: `Cargo.toml`, `build.rs`, `src/lib.rs` (the API) and `src/rosetta.rs` (the runtime, which needs only `std`). The crate has no dependencies, so it builds offline. Run `just rust-test` for the runtime, names, rustdoc, capability and CLI tests.
+
+```{sh, eval=false}
+rosetta api.hpp --language rust --module features --policy api.policy.json \
+  -o generated/features.cpp --rust-output generated/features --parts 4
+clang++ -std=c++17 -shared -fPIC generated/features*.cpp -o lib/libfeatures.so
+# In a crate with features = { path = "generated/features" } as a dependency:
+FEATURES_RUST_LIB_DIR=$PWD/lib RUSTFLAGS="-C link-arg=-Wl,-rpath,$PWD/lib" cargo run
+```
+
+```{rust, eval=false}
+use features::*;
+
+struct Triangle;
+impl ShapeImpl for Triangle {
+    fn area(&self, _this: &Shape) -> Result<f64> {
+        Ok(6.0)
+    }
+}
+
+fn main() -> Result<()> {
+    let c = Circle::new(2.0)?;
+    let t = Shape::from_impl(Triangle)?;
+    println!("{} {}", c.area()?, area_of(&t)?); // C++ calls the Rust implementation
+    Ok(())
+}
+```
+
+- A class is a struct holding a handle to the C\+\+ object. Cloning it shares the object, and dropping the last clone releases it (`close()` does so at once; later calls fail with `ErrorKind::Binding`). Classes are `Send + Sync`.
+- A derived class holds its bases and `Deref`s to its primary base, so base methods apply and `&Circle` passes where `&Shape` is expected; `as_shape()` and `From` reach every ancestor (including secondary bases); `cast::<Circle>(&shape)` returns the most-derived class.
+- Rust has no overloading, so each overload is its own function. The one taking the fewest arguments keeps the name; the others add their parameter names (`new_x_y`), else their types (`pick_f64`, `pick_str`). Default arguments give one function per arity (`add`, `add_with_b`, `add_with_c`). C\+\+ resolves the call again at run time. Names are snake_case; keywords get a `_` suffix (`type_`, `match_`). Generated names come first (`close`, `new`, `as_base`), so a C\+\+ member of the same name is numbered (`close_2`).
+- Calls that can throw return `Result<T>` with an `Error` whose `kind()` is `InvalidArgument`, `OutOfRange`, ... for C\+\+ exceptions, `Binding` for values that do not convert, and `Callback` for a Rust callback or override that failed or panicked; the original error is `source()`. noexcept functions, field getters and constants return `T` and panic on errors.
+- Virtual methods: each class with virtual methods has a trait (`ShapeImpl`) whose methods default to the C\+\+ implementation, and `Shape::from_impl(imp, ...)` creates a C\+\+ object that calls them. The methods get `this`, the C\+\+ object, whose virtual methods run the C\+\+ implementation (`Base::method()` in C\+\+). Calling a virtual method on the object `from_impl` returns runs the Rust implementation, and `implementation::<T>(&shape)` returns it. C\+\+ may own the object (`unique_ptr`/`shared_ptr` parameters); it keeps the Rust value alive.
+- Types: `int` is `i32`, `size_t` `usize`, `double` `f64`, `char` `char` (one byte), `std::string` `String` (`&str` as a parameter), vectors `Vec<T>` (slices as parameters; `&[impl AsRef<str>]` for strings), `std::map` `BTreeMap`, `std::unordered_map` `HashMap`, sets `BTreeSet`/`HashSet` (maps and sets with float or class keys are `Vec`s of pairs or items), pairs and tuples Rust tuples, `std::optional` and pointers `Option`, `std::complex` `Complex`, `std::function` closures (`impl Fn(..) + Send + Sync + 'static` parameters, `Arc<dyn Fn>` results), mutable references `&mut T` written back, and anything else a `Value`. Enums are newtypes over `i64` with an associated constant per enumerator (`Kind::CIRCLE`; other values pass through), and `Display` writes the C\+\+ name.
+- Names the prelude, `std` imports and the runtime use (`String`, `Vec`, `Option`, `Result`, `Error`, `Box`, `HashMap`, `Arc`, `Value`, ...) stay theirs: a C\+\+ class of that name takes a `_` suffix (`String_`). Policy submodules are Rust modules (`features::data::unit()`).
+- Doxygen becomes rustdoc (`# Arguments`, `# Errors`, intra-doc links, code blocks fenced as `text` so they are not doctests); `cargo doc` builds it without warnings.
+- The crate links the native library as `-lNAME` (`--rust-library`, default the module). `build.rs` adds `$MODULE_RUST_LIB_DIR` to the link search path; at run time the loader finds it through an rpath or `LD_LIBRARY_PATH`. `--rust-crate` names the package. In CMake, use `rosetta_generate_rust(HEADER ... MODULE ... OUTPUT ... RUST_OUTPUT <crate dir> PARTS N)`.
+
+`tests/test_rust_full.rs` (ctest `rust_full_features`, 320 checks) runs the shared suite on `examples/python_features.hpp`; `tests/test_rust_names.rs` (ctest `rust_full_names`) covers prelude and runtime type names, keywords, generated member names and multiple inheritance; `rust_full_*_doc` run `cargo doc` with warnings as errors; and `tests/test_rust_capabilities.cpp` covers the generator and CLI.
+
+>> PHP
+
+`--language php` generates one PHP 8.1+ file: a small runtime, then the API in a namespace (`--php-namespace`, default the module name in PascalCase). It calls the shared C ABI library through PHP's FFI extension, so no PHP extension has to be compiled. `ffi.enable` defaults to `preload`, which allows FFI on the command line; other SAPIs (php-fpm, Apache) need `ffi.enable=true`. Run `just php-test` for the runtime, names, lint, capability and CLI tests.
+
+```{sh, eval=false}
+rosetta api.hpp --language php --module features --policy api.policy.json \
+  -o generated/features.cpp --php-output generated/features.php --parts 4
+clang++ -std=c++17 -shared -fPIC generated/features*.cpp -o generated/libfeatures.so
+php app.php    # require 'generated/features.php'
+```
+
+```{php, eval=false}
+<?php
+require __DIR__ . '/generated/features.php';
+
+use Features\{Circle, Shape};
+use function Features\area_of;
+
+class Triangle extends Shape
+{
+    public function area(): float
+    {
+        return 6.0;
+    }
+}
+
+$c = new Circle(2);
+echo $c->area(), ' ', area_of(new Triangle()), "\n";   // C++ calls the PHP override
+```
+
+- Classes extend `NativeObject`, and C\+\+ inheritance along primary bases is PHP inheritance; a secondary base is reached through `asBase()` (and parameters of such a base take any object, which C\+\+ checks). The C\+\+ object is released when the last PHP reference goes away, or at once by `close()`; `cast(Circle::class)` converts to a derived class or a base.
+- Virtual C\+\+ methods are overridden by PHP subclasses: constructing one creates a C\+\+ subclass whose virtual methods call the PHP methods, and `parent::area()` runs the C\+\+ implementation. A subclass constructor must call `parent::__construct()`. C\+\+ may own the object (`unique_ptr`/`shared_ptr` parameters); it keeps the PHP object alive, and the same PHP object comes back.
+- Methods are camelCase, functions snake_case (namespaced, so `count` or `strlen` are fine), classes and enum cases PascalCase. PHP compares class, function and method names case-insensitively, so `getName` and `get_name` become `getName` and `getName2`; reserved words take a `_` suffix (`List_`, `print_`). Names `NativeObject` uses come first (`close2`). A method hiding a base method whose signature PHP would reject as an override is numbered too.
+- Overloads of a name are one method whose parameters are union types (`pick(int|float|string|array|Shape $arg1)`); C\+\+ picks the overload at run time. Default arguments are PHP defaults when they are literals, else `null`; either way only the arguments a call passes cross, so C\+\+ applies its own defaults.
+- Fields are properties (`$v->x = 5`, through `__get`/`__set`, documented with `@property`); read-only fields throw on assignment. `operator[]` is `ArrayAccess` (read-only), `to_string()` `__toString`, `operator()` `__invoke`, other operators methods (`add`, `equals`, `addAssign`). Constants are functions and static methods (`golden()`, `Shape::sidesUnknown()`), since their values come from C\+\+.
+- Types: integers are `int`, floating point `float`, `char` a one-character string, strings `string`, vectors and sets lists, maps arrays (a list of `[key, value]` pairs when keys are not integers or strings), pairs and tuples lists, `std::optional` and pointers nullable, `std::complex` `Complex`, `std::function` any callable (a returned one is a callable `NativeFunction`), byte vectors a string or a list, mutable references by-reference parameters. Enums are backed enums (`Kind::Circle`); arguments take the case or its value, and results that are no enumerator are integers.
+- C\+\+ exceptions are subclasses of the SPL exceptions implementing `NativeError` (`getKind()`): `InvalidArgumentException` extends `\InvalidArgumentException`, likewise `OutOfRangeException`, `DomainException`, `LengthException`, `RangeException`; `BindingException` (a `\LogicException`) is for values C\+\+ does not accept and closed objects. A PHP exception thrown in a callback or override crosses C\+\+ and is rethrown unchanged.
+- Doxygen becomes PHPDoc (`@param` with PHPStan-style types such as `list<float>`, `@return`, `@throws`, `@see`, Markdown descriptions).
+- The library is found through `MODULE_PHP_LIBRARY` (a path), beside the PHP file, in `lib/` or `../lib`, else on the loader's search path; `--php-library` names it. In CMake, use `rosetta_generate_php(HEADER ... MODULE ... OUTPUT ... PHP_OUTPUT ... PARTS N)`.
+
+`tests/test_php_full.php` (ctest `php_full_features`, 306 checks) runs the shared suite on `examples/python_features.hpp`; `tests/test_php_names.php` (ctest `php_full_names`) covers reserved words, case-insensitive names, the runtime's names, hiding and multiple inheritance; `php_full_*_lint` run `php -l`; and `tests/test_php_capabilities.cpp` covers the generator and CLI.
+
+>> Perl
+
+`--language perl` (also `pl`) generates one Perl 5.14+ module: a small runtime, then the API under a package (`--perl-package`, default the module name in PascalCase), documented in POD. The C\+\+ library's first source also carries an XS glue (three XSUBs and the callback hooks), so it compiles against Perl's headers (`perl -MExtUtils::Embed -e ccopts`); the module loads it with the core `DynaLoader`, and needs no CPAN modules. Run `just perl-test` for the runtime, names, compile, POD, capability and CLI tests.
+
+```{sh, eval=false}
+rosetta api.hpp --language perl --module features --policy api.policy.json \
+  -o generated/features.cpp --perl-output generated/Features.pm --parts 4
+clang++ -std=c++17 -shared -fPIC $(perl -MExtUtils::Embed -e ccopts) generated/features*.cpp \
+  -o generated/libfeatures.so
+perl -Igenerated app.pl    # use Features qw(:all);
+```
+
+```{perl, eval=false}
+use strict;
+use warnings;
+use Features qw(area_of);
+
+package Triangle {
+    use parent -norequire, 'Features::Shape';
+    sub area { 6 }
+}
+
+my $c = Features::Circle->new(2);
+print $c->area, ' ', area_of(Triangle->new), "\n";   # C++ calls the Perl override
+```
+
+- Classes are packages (`Features::Circle->new(2)`) whose `@ISA` lists their C\+\+ bases, multiple inheritance included, over `Features::NativeObject`. Objects are hashes; the C\+\+ object is released when the last reference goes away, or at once by `close`; `cast('Features::Circle')` converts to a derived class or a base.
+- Perl subclasses override virtual C\+\+ methods: constructing one creates a C\+\+ subclass whose virtual methods call the Perl methods, and `SUPER::area` runs the C\+\+ implementation. A subclass's `new` must call `SUPER::new`. C\+\+ may own the object; it keeps the Perl object alive, and the same Perl object comes back.
+- Methods and functions are snake_case, packages PascalCase, constants and enumerators UPPER_CASE. A function named like a Perl builtin takes an underscore (`print_`), since an import could not override the builtin; members named like the subs Perl or `NativeObject` reserve are numbered (`close_2`), and so are names that meet in snake_case (`getName` and `get_name` become `get_name` and `get_name_2`). A derived class keeps its bases' names, so C\+\+ overrides stay Perl overrides.
+- Overloads of a name are one sub; C\+\+ picks the overload at run time. Only the arguments a call passes cross, so C\+\+ applies its default arguments. Booleans, numbers and strings are told apart by the scalar's flags; when no overload takes the value as it is, numeric strings convert to numbers and numbers to strings.
+- Fields are accessors (`$v->x`, `$v->x(5)`); read-only ones die on assignment. Operators are methods (`add`, `equals`, `at`) and Perl operators through `use overload` (`+`, `==`, `+=`, `""` for `to_string`, `&{}` for `operator()`). Enumerations are packages of constants (`Features::Kind::CIRCLE`) whose values C\+\+ takes and returns; C\+\+ constants are functions (`GOLDEN()`, `Features::Shape->SIDES_UNKNOWN`).
+- Types: numbers and strings are scalars (strings are UTF-8 in C\+\+), vectors and sets array references, maps hash references (an array reference of `[key, value]` pairs when keys are not strings or integers), pairs and tuples array references, `std::optional` and pointers `undef` or a value, unsigned 64-bit values exact, `std::complex` `Math::Complex`, `std::function` code references (a returned one is a code reference too), byte vectors a byte string or an array reference. A non-const reference parameter is written back to the variable passed, through a reference (`\$n`), or into an array or hash reference in place.
+- C\+\+ exceptions die with objects of `Features::Error::InvalidArgument`, `OutOfRange`, `Domain`, `Length`, `Arithmetic`, `Native` or `Binding` (values C\+\+ does not accept, closed objects), all `Features::Error`s with `message`, `kind`, `file` and `line`, stringifying as Perl's own errors do (`... at app.pl line 7.`). An error a Perl callback or override dies with (any value) crosses C\+\+ and is rethrown unchanged.
+- Doxygen becomes POD (`perldoc generated/Features.pm`): each package a `=head1` section, each sub a `=head2` with its call, parameters, result, errors and overloads.
+- The library is found through `MODULE_PERL_LIBRARY` (a path), beside the module, in `lib/` or `../lib`, in `auto/Features/` under `@INC`, else on the loader's search path; `--perl-library` names it. In CMake, use `rosetta_generate_perl(HEADER ... MODULE ... OUTPUT ... PERL_OUTPUT ... PARTS N)` and `rosetta_perl_flags(target)` (cmake/PerlExample.cmake) for Perl's headers and flags.
+
+`tests/test_perl_full.pl` (ctest `perl_full_features`, 316 checks) runs the shared suite on `examples/python_features.hpp`; `tests/test_perl_names.pl` (ctest `perl_full_names`) covers builtins as names, the runtime's names, reserved subs, a renamed virtual method, multiple inheritance, hiding, operators and 64-bit values; `perl_full_*_compile` and `perl_full_*_pod` run `perl -c` and `podchecker`; and `tests/test_perl_capabilities.cpp` covers the generator and CLI.
 
 >> Fortran
 

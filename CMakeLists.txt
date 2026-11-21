@@ -42,6 +42,10 @@ add_library(rosetta_core
     src/julia_full.cpp
     src/cabi_full.cpp
     src/csharp_full.cpp
+    src/vb_full.cpp
+    src/rust_full.cpp
+    src/php_full.cpp
+    src/perl_full.cpp
     src/fortran.cpp
     src/fortran_full.cpp
     src/csharp.cpp
@@ -82,6 +86,10 @@ include(cmake/OctaveExample.cmake)
 include(cmake/JuliaExample.cmake)
 include(cmake/JavaExample.cmake)
 include(cmake/CSharpExample.cmake)
+include(cmake/VisualBasicExample.cmake)
+include(cmake/RustExample.cmake)
+include(cmake/PhpExample.cmake)
+include(cmake/PerlExample.cmake)
 include(cmake/FortranExample.cmake)
 include(cmake/CommonLispExample.cmake)
 include(cmake/TclExample.cmake)
@@ -102,6 +110,26 @@ if(BUILD_TESTING)
     target_include_directories(rosetta_csharp_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     rosetta_warnings(rosetta_csharp_capability_tests)
     add_test(NAME csharp_capabilities COMMAND rosetta_csharp_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_vb_capability_tests tests/test_vb_capabilities.cpp)
+    target_link_libraries(rosetta_vb_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_vb_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_vb_capability_tests)
+    add_test(NAME vb_capabilities COMMAND rosetta_vb_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_rust_capability_tests tests/test_rust_capabilities.cpp)
+    target_link_libraries(rosetta_rust_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_rust_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_rust_capability_tests)
+    add_test(NAME rust_capabilities COMMAND rosetta_rust_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_php_capability_tests tests/test_php_capabilities.cpp)
+    target_link_libraries(rosetta_php_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_php_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_php_capability_tests)
+    add_test(NAME php_capabilities COMMAND rosetta_php_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_perl_capability_tests tests/test_perl_capabilities.cpp)
+    target_link_libraries(rosetta_perl_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_perl_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_perl_capability_tests)
+    add_test(NAME perl_capabilities COMMAND rosetta_perl_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
     add_executable(rosetta_java_capability_tests tests/test_java_capabilities.cpp)
     target_link_libraries(rosetta_java_capability_tests PRIVATE rosetta_core)
     target_include_directories(rosetta_java_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")

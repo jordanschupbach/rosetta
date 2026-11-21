@@ -9,6 +9,10 @@
 #include "rosetta/julia.hpp"
 #include "rosetta/java.hpp"
 #include "rosetta/csharp.hpp"
+#include "rosetta/visual_basic.hpp"
+#include "rosetta/rust.hpp"
+#include "rosetta/php.hpp"
+#include "rosetta/perl.hpp"
 #include "rosetta/fortran.hpp"
 #include "rosetta/common_lisp.hpp"
 #include "rosetta/tcl.hpp"
@@ -33,7 +37,7 @@ namespace {
 constexpr const char* usage = R"(Usage: rosetta HEADER --module NAME -o OUTPUT [options] [-- CLANG_FLAGS...]
 
 Generate native language bindings from a C++ header.
-  --language lua|r|python|javascript|ruby|octave|julia|java|csharp|fortran|common-lisp|tcl|guile|ocaml|go|apl|cobol  Target language (default: lua)
+  --language lua|r|python|javascript|ruby|octave|julia|java|csharp|visual-basic|rust|php|perl|fortran|common-lisp|tcl|guile|ocaml|go|apl|cobol  Target language (default: lua)
   --object-system r6|s3|s4  R object system (default: r6)
   --r-output PATH       Generated R interface (default: OUTPUT with extension .R)
   --julia-output PATH   Generated Julia interface (default: OUTPUT with extension .jl)
@@ -111,6 +115,30 @@ Generate native language bindings from a C++ header.
   --csharp-library NAME Shared library base name the C# side loads (--csharp-api full)
   --csharp-project PATH Also write a .csproj for the interface (--csharp-api full)
   --csharp-functions NAME Static class of the module functions (--csharp-api full; default: Functions)
+  --vb-output PATH      Generated Visual Basic interface (--language visual-basic; default: MODULE.vb beside
+                        OUTPUT); classes with inheritance, Overridable methods VB subclasses override,
+                        PascalCase methods and properties, operators, containers, delegates and XML docs
+  --vb-namespace NAME   Visual Basic namespace (default: MODULE in PascalCase)
+  --vb-library NAME     Shared library base name the VB side loads (default: MODULE)
+  --vb-project PATH     Also write a .vbproj for the interface
+  --vb-functions NAME   Class of the module functions (default: Functions)
+  --rust-output DIR     Generated Cargo crate (--language rust; default: MODULE beside OUTPUT): Cargo.toml,
+                        build.rs, src/lib.rs (the declared output) and src/rosetta.rs; structs with Deref
+                        to their bases, traits Rust types implement for virtual methods, Result errors,
+                        containers, closures and rustdoc from the C++ documentation
+  --rust-crate NAME     Cargo package and crate name (default: MODULE)
+  --rust-library NAME   Shared library the crate links as -lNAME (default: MODULE)
+  --php-output PATH     Generated PHP file (--language php; default: MODULE.php beside OUTPUT): the runtime,
+                        classes extending NativeObject (PHP subclasses override virtual methods), backed
+                        enums, functions, SPL exceptions and PHPDoc; it loads the library through FFI
+  --php-namespace NAME  PHP namespace (default: MODULE in PascalCase; a\b nests)
+  --php-library NAME    Shared library base name the PHP file loads (default: MODULE)
+  --perl-output PATH    Generated Perl module (--language perl, also pl; default: MODULE.pm beside OUTPUT):
+                        the runtime, packages of the classes (Perl subclasses override virtual methods),
+                        constants, functions, Error classes and POD; OUTPUT carries the XS glue, so build
+                        the library with Perl's headers (perl -MExtUtils::Embed -e ccopts)
+  --perl-package NAME   Perl package (default: MODULE in PascalCase; a::b nests)
+  --perl-library NAME   Shared library base name the Perl module loads (default: MODULE)
   --java-package NAME   Java package (default: unnamed package; --java-api full: MODULE)
   --java-api minimal|full Java binding style (default: minimal); full binds classes with inheritance,
                          overrides, containers, callbacks and Javadoc; --java-output is then the
@@ -160,6 +188,10 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         bool skip = false, skip_bodies = false, r_package = false;
         std::string octave_api, octave_output, octave_package;
         std::string apl_api, apl_prefix;
+        std::string vb_output, vb_namespace, vb_library, vb_project, vb_functions;
+        std::string rust_output, rust_crate, rust_library;
+        std::string php_output, php_namespace, php_library;
+        std::string perl_output, perl_package, perl_library;
         for (std::size_t i = 0; i < arguments.size(); ++i) {
             const auto& arg = arguments[i];
             if (arg == "--") {
@@ -174,6 +206,31 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
                 if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
                     throw BindingError("missing value for " + arg);
                 scopes.emplace_back(arguments[i]);
+                continue;
+            }
+            if (arg == "--vb-output" || arg == "--vb-namespace" || arg == "--vb-library" || arg == "--vb-project" || arg == "--vb-functions") {
+                if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
+                    throw BindingError("missing value for " + arg);
+                (arg == "--vb-output" ? vb_output : arg == "--vb-namespace" ? vb_namespace : arg == "--vb-library" ? vb_library
+                    : arg == "--vb-project" ? vb_project : vb_functions) = arguments[i];
+                continue;
+            }
+            if (arg == "--rust-output" || arg == "--rust-crate" || arg == "--rust-library") {
+                if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
+                    throw BindingError("missing value for " + arg);
+                (arg == "--rust-output" ? rust_output : arg == "--rust-crate" ? rust_crate : rust_library) = arguments[i];
+                continue;
+            }
+            if (arg == "--perl-output" || arg == "--perl-package" || arg == "--perl-library") {
+                if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
+                    throw BindingError("missing value for " + arg);
+                (arg == "--perl-output" ? perl_output : arg == "--perl-package" ? perl_package : perl_library) = arguments[i];
+                continue;
+            }
+            if (arg == "--php-output" || arg == "--php-namespace" || arg == "--php-library") {
+                if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
+                    throw BindingError("missing value for " + arg);
+                (arg == "--php-output" ? php_output : arg == "--php-namespace" ? php_namespace : php_library) = arguments[i];
                 continue;
             }
             if (arg == "--apl-api" || arg == "--apl-prefix") {
@@ -282,7 +339,10 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         if (header.empty() || name.empty() || output.empty())
             throw BindingError("HEADER, --module and --output are required; use --help for usage");
         if (language == "js" || language == "node") language = "javascript";
-        if (language != "lua" && language != "r" && language != "python" && language != "javascript" && language != "ruby" && language != "octave" && language != "julia" && language != "java" && language != "csharp" && language != "fortran" && language != "common-lisp" && language != "tcl" && language != "guile" && language != "ocaml" && language != "go" && language != "apl" && language != "cobol") throw BindingError("unsupported language: " + language);
+        if (language == "vb" || language == "vbnet" || language == "visualbasic") language = "visual-basic";
+        if (language == "rs") language = "rust";
+        if (language == "pl") language = "perl";
+        if (language != "lua" && language != "r" && language != "python" && language != "javascript" && language != "ruby" && language != "octave" && language != "julia" && language != "java" && language != "csharp" && language != "visual-basic" && language != "rust" && language != "php" && language != "perl" && language != "fortran" && language != "common-lisp" && language != "tcl" && language != "guile" && language != "ocaml" && language != "go" && language != "apl" && language != "cobol") throw BindingError("unsupported language: " + language);
         if (language != "lua" && (!lua_api.empty() || !lua_meta.empty())) throw BindingError("--lua-api and --lua-meta require --language lua");
         if (!lua_api.empty() && lua_api != "minimal" && lua_api != "full") throw BindingError("--lua-api must be minimal or full");
         const bool lua_full = language == "lua" && lua_api == "full";
@@ -304,6 +364,19 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             throw BindingError("--csharp-api, --csharp-library, --csharp-project and --csharp-functions require --language csharp");
         if (!csharp_api.empty() && csharp_api != "minimal" && csharp_api != "full") throw BindingError("--csharp-api must be minimal or full");
         const bool csharp_full = language == "csharp" && csharp_api == "full";
+        if (language != "visual-basic" && (!vb_output.empty() || !vb_namespace.empty() || !vb_library.empty() || !vb_project.empty() || !vb_functions.empty()))
+            throw BindingError("--vb-output, --vb-namespace, --vb-library, --vb-project and --vb-functions require --language visual-basic");
+        if (language == "visual-basic" && vb_output.empty()) vb_output = (std::filesystem::path(output).parent_path() / (name + ".vb")).string();
+        if (language != "rust" && (!rust_output.empty() || !rust_crate.empty() || !rust_library.empty()))
+            throw BindingError("--rust-output, --rust-crate and --rust-library require --language rust");
+        if (language == "rust" && rust_output.empty()) rust_output = (std::filesystem::path(output).parent_path() / name).string();
+        const std::string rust_lib = language == "rust" ? (std::filesystem::path(rust_output) / "src" / "lib.rs").string() : std::string();
+        if (language != "php" && (!php_output.empty() || !php_namespace.empty() || !php_library.empty()))
+            throw BindingError("--php-output, --php-namespace and --php-library require --language php");
+        if (language == "php" && php_output.empty()) php_output = (std::filesystem::path(output).parent_path() / (name + ".php")).string();
+        if (language != "perl" && (!perl_output.empty() || !perl_package.empty() || !perl_library.empty()))
+            throw BindingError("--perl-output, --perl-package and --perl-library require --language perl");
+        if (language == "perl" && perl_output.empty()) perl_output = (std::filesystem::path(output).parent_path() / (name + ".pm")).string();
         if (language != "java" && (!java_api.empty() || !java_library.empty())) throw BindingError("--java-api and --java-library require --language java");
         if (!java_api.empty() && java_api != "minimal" && java_api != "full") throw BindingError("--java-api must be minimal or full");
         const bool java_full = language == "java" && java_api == "full";
@@ -364,8 +437,8 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         const bool go_full = language == "go" && go_api == "full";
         if (!go_full && (!go_package.empty() || !go_module_path.empty() || !go_library.empty()))
             throw BindingError("--go-package, --go-module-path and --go-library require --go-api full");
-        if (language != "python" && language != "javascript" && !lua_full && !lisp_full && !julia_full && !csharp_full && !cobol_full && !fortran_full && !ruby_full && !guile_full && !octave_full && !tcl_full && !java_full && !go_full && !ocaml_full && !apl_full && !(language == "r" && object_system != "s3" && object_system != "s4") && python_parts != 1)
-            throw BindingError("--parts requires --language python, javascript, r (R6), lua (--lua-api full), common-lisp (--lisp-api full), julia (--julia-api full), csharp (--csharp-api full), fortran (--fortran-api full), ruby (--ruby-api full), guile (--guile-api full), octave (--octave-api full), tcl (--tcl-api full), java (--java-api full), go (--go-api full), ocaml (--ocaml-api full), apl (--apl-api full) or cobol (--cobol-api full)");
+        if (language != "python" && language != "javascript" && language != "visual-basic" && language != "rust" && language != "php" && language != "perl" && !lua_full && !lisp_full && !julia_full && !csharp_full && !cobol_full && !fortran_full && !ruby_full && !guile_full && !octave_full && !tcl_full && !java_full && !go_full && !ocaml_full && !apl_full && !(language == "r" && object_system != "s3" && object_system != "s4") && python_parts != 1)
+            throw BindingError("--parts requires --language python, javascript, r (R6), lua (--lua-api full), common-lisp (--lisp-api full), julia (--julia-api full), csharp (--csharp-api full), visual-basic, rust, php, perl, fortran (--fortran-api full), ruby (--ruby-api full), guile (--guile-api full), octave (--octave-api full), tcl (--tcl-api full), java (--java-api full), go (--go-api full), ocaml (--ocaml-api full), apl (--apl-api full) or cobol (--cobol-api full)");
         if (r_package && (language != "r" || object_system == "s3" || object_system == "s4"))
             throw BindingError("--r-package requires --language r with the R6 object system");
         if (language != "r" && (!object_system.empty() || !r_output.empty()))
@@ -470,7 +543,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         if (language == "csharp" && csharp_output.empty()) csharp_output = (std::filesystem::path(output).parent_path() / (name + ".cs")).string();
         if (language != "fortran" && !fortran_output.empty()) throw BindingError("--fortran-output requires --language fortran");
         if (language == "fortran" && fortran_output.empty()) fortran_output = (std::filesystem::path(output).parent_path() / (name + ".f90")).string();
-        const auto interface_output = tcl_full ? tcl_output : octave_full ? octave_contents : language == "ruby" ? ruby_output : language == "javascript" ? js_types : language == "cobol" ? cobol_output : language == "apl" ? gnu_apl_output : language == "go" ? go_output : language == "ocaml" ? ocaml_output : language == "guile" ? guile_output : language == "common-lisp" ? lisp_output : language == "fortran" ? fortran_output : language == "csharp" ? csharp_output : java_full ? java_package_info : language == "java" ? java_output : language == "julia" ? julia_output : language == "lua" ? lua_meta : r_output;
+        const auto interface_output = tcl_full ? tcl_output : octave_full ? octave_contents : language == "ruby" ? ruby_output : language == "javascript" ? js_types : language == "cobol" ? cobol_output : language == "apl" ? gnu_apl_output : language == "go" ? go_output : language == "ocaml" ? ocaml_output : language == "guile" ? guile_output : language == "common-lisp" ? lisp_output : language == "fortran" ? fortran_output : language == "csharp" ? csharp_output : language == "visual-basic" ? vb_output : language == "rust" ? rust_lib : language == "php" ? php_output : language == "perl" ? perl_output : java_full ? java_package_info : language == "java" ? java_output : language == "julia" ? julia_output : language == "lua" ? lua_meta : r_output;
         if (database_path.empty() && (!translation_unit.empty() || command_index))
             throw BindingError("--translation-unit and --command-index require --compile-commands");
         const auto compilation = database_path.empty() ? std::optional<CompilationCommand>{} :
@@ -481,7 +554,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         const auto dep_path = depfile.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(depfile);
         const auto interface_path = interface_output.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(interface_output);
         // APL's second script: the Dyalog namespace.
-        const auto second_output = !tcl_pkgindex.empty() ? tcl_pkgindex : !dyalog_output.empty() ? dyalog_output : !cobol_callbacks.empty() ? cobol_callbacks : !julia_project.empty() ? julia_project : !csharp_project.empty() ? csharp_project : lisp_system;
+        const auto second_output = !tcl_pkgindex.empty() ? tcl_pkgindex : !dyalog_output.empty() ? dyalog_output : !cobol_callbacks.empty() ? cobol_callbacks : !julia_project.empty() ? julia_project : !csharp_project.empty() ? csharp_project : !vb_project.empty() ? vb_project : lisp_system;
         const auto second_path = second_output.empty() ? std::filesystem::path{} : std::filesystem::weakly_canonical(second_output);
         const auto same_file = [](const auto& a, const auto& b) {
             if (a == b) return true;
@@ -523,7 +596,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             if (!policy_path.empty()) protected_paths.push_back(std::filesystem::canonical(policy_path));
             if (compilation) { protected_paths.push_back(compilation->database); protected_paths.push_back(compilation->file); }
             for (const auto& path : protected_paths)
-                if (same_file(interface_path, path)) throw BindingError(language == "cobol" ? "COBOL copybook and inputs/outputs must have distinct paths" : language == "apl" ? "APL scripts and inputs/outputs must have distinct paths" : language == "go" ? "Go package file and inputs/outputs must have distinct paths" : language == "ocaml" ? "OCaml module and inputs/outputs must have distinct paths" : language == "guile" ? "Guile module and inputs/outputs must have distinct paths" : language == "common-lisp" ? "Common Lisp interface and inputs/outputs must have distinct paths" : language == "fortran" ? "Fortran interface and inputs/outputs must have distinct paths" : language == "csharp" ? "C# interface and inputs/outputs must have distinct paths" : language == "java" ? "Java interface and inputs/outputs must have distinct paths" :
+                if (same_file(interface_path, path)) throw BindingError(language == "cobol" ? "COBOL copybook and inputs/outputs must have distinct paths" : language == "apl" ? "APL scripts and inputs/outputs must have distinct paths" : language == "go" ? "Go package file and inputs/outputs must have distinct paths" : language == "ocaml" ? "OCaml module and inputs/outputs must have distinct paths" : language == "guile" ? "Guile module and inputs/outputs must have distinct paths" : language == "common-lisp" ? "Common Lisp interface and inputs/outputs must have distinct paths" : language == "fortran" ? "Fortran interface and inputs/outputs must have distinct paths" : language == "csharp" ? "C# interface and inputs/outputs must have distinct paths" : language == "visual-basic" ? "Visual Basic interface and inputs/outputs must have distinct paths" : language == "rust" ? "Rust crate and inputs/outputs must have distinct paths" : language == "php" ? "PHP file and inputs/outputs must have distinct paths" : language == "perl" ? "Perl module and inputs/outputs must have distinct paths" : language == "java" ? "Java interface and inputs/outputs must have distinct paths" :
                     language == "julia" ? "Julia interface and inputs/outputs must have distinct paths" : language == "javascript" ? "TypeScript declarations and inputs/outputs must have distinct paths" : language == "lua" ? "Lua stub and inputs/outputs must have distinct paths" : "R interface and inputs/outputs must have distinct paths");
         }
         const auto policy = policy_path.empty() ? BindingPolicy{} : load_policy(policy_path);
@@ -785,6 +858,61 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             }
             language_interface = csharp.interface;
             second_interface = csharp.project;
+        } else if (language == "visual-basic") {
+            VisualBasicOptions options;
+            options.parts = python_parts;
+            options.managed_namespace = vb_namespace;
+            options.library = vb_library;
+            options.functions_class = vb_functions;
+            const auto vb = generate_visual_basic(module, name, skip, policy, options);
+            generated = {vb.source, vb.diagnostics};
+            for (std::size_t i = 0; i < vb.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, vb.parts[i]);
+            }
+            language_interface = vb.interface;
+            second_interface = vb.project;
+        } else if (language == "rust") {
+            RustOptions options;
+            options.parts = python_parts;
+            options.crate = rust_crate;
+            options.library = rust_library;
+            const auto rust = generate_rust(module, name, skip, policy, options);
+            generated = {rust.source, rust.diagnostics};
+            for (std::size_t i = 0; i < rust.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, rust.parts[i]);
+            }
+            language_interface = rust.lib;
+            for (const auto& [relative, text] : rust.files) package_files.emplace_back(std::filesystem::path(rust_output) / relative, text);
+        } else if (language == "php") {
+            PhpOptions options;
+            options.parts = python_parts;
+            options.namespace_ = php_namespace;
+            options.library = php_library;
+            const auto php = generate_php(module, name, skip, policy, options);
+            generated = {php.source, php.diagnostics};
+            for (std::size_t i = 0; i < php.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, php.parts[i]);
+            }
+            language_interface = php.php;
+        } else if (language == "perl") {
+            PerlOptions options;
+            options.parts = python_parts;
+            options.package = perl_package;
+            options.library = perl_library;
+            const auto perl = generate_perl(module, name, skip, policy, options);
+            generated = {perl.source, perl.diagnostics};
+            for (std::size_t i = 0; i < perl.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, perl.parts[i]);
+            }
+            language_interface = perl.perl;
         } else if (language == "csharp") {
             const auto csharp = generate_csharp(module, name, skip, policy, csharp_namespace);
             generated = {csharp.source, csharp.diagnostics};
