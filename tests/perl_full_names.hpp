@@ -5,6 +5,9 @@
 // NativeObject reserve; a renamed virtual method a Perl subclass overrides; multiple inheritance;
 // C++ hiding; operators, to_string and operator(); 64-bit unsigned values; booleans.
 #include <cstdint>
+#include <cstdio>
+#include <stdexcept>
+#include <iostream>
 #include <functional>
 #include <string>
 #include <vector>
@@ -123,6 +126,14 @@ inline std::string kind_of(long long) { return "int"; }
 inline std::string kind_of(const std::string&) { return "string"; }
 inline void bump(int& value, std::string& text) { ++value; text += "!"; }
 inline int call_twice(const std::function<int(int)>& f, int x) { return f(f(x)); }
+/// Prints, then throws: the text must still come before the caller's later output.
+inline void say_then_throw(const std::string& text) { std::printf("%s\n", text.c_str()); throw std::invalid_argument("after printing"); }
+/// Writes `text` to std::cout and stdout, around a callback that may print too (output order).
+inline void say_around(const std::string& text, const std::function<void()>& f) {
+    std::cout << text << '[';
+    f();
+    std::printf("]\n");
+}
 
 namespace data {
 inline int twice(int x) { return 2 * x; }

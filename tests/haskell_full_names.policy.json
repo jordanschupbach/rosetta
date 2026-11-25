@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "select": "all",
+  "names": "flat",
+  "exclude": ["shadow::kind_of_value"],
+  "convert": { "shadow::Samples": "std::vector<double>" },
+  "modules": { "shadow::stats": "stats" }
+}

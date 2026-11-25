@@ -73,6 +73,9 @@ struct Cursor {
     int Count() const { return count * 10; }                // count -> count_field
     int type() const { return 1; }                          // type_
     int match(int fn, int ref) const { return fn * ref; }   // match_(fn_, ref_)
+    int yield(int a, int b = 4) const { return a * b; }     // yield_, yield_with_b (not yield__with_b)
+    int loop(int n) const { return n; }                     // loop_
+    int loop(double x, int n) const { return int(x) + n; }  // loop_x_n (not loop__x_n)
     int move(int self) { position += self; return position; }  // move_(self_)
     bool close() { return true; }                           // the generated close comes first
     int clone() const { return 42; }                        // a C++ clone next to Clone

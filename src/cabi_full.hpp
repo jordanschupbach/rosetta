@@ -95,6 +95,11 @@ protected:
     virtual std::string symbol_prefix() const = 0;                     // of generated C++ functions
     virtual std::string runtime_define() const = 0;                    // ROSETTA_FULL_<LANGUAGE>
     virtual std::string module_prefix() const = 0;                     // of the C++ namespace
+    // The name enumerator `index` of an enum crosses as (symbols, where the target uses them).
+    virtual std::string enum_label(const std::string& qualified, std::size_t index) const {
+        const auto& enumerator = enums_.at(qualified)->enumerators[index];
+        return renamed(qualified + "::" + enumerator, enumerator);
+    }
 
     // ------------------------------------------------------------ state
     const Module& module_;

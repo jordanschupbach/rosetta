@@ -595,18 +595,19 @@ std::string Generator::borrowed(const Type& type, const std::string& owned) cons
 // ---------------------------------------------------------------- naming
 // The Rust functions of a group of overloads: one per overload and arity (default arguments),
 // with duplicates of an earlier Rust signature dropped (C++ resolves the call at run time anyway).
-// The overload taking the fewest arguments keeps `base`; the others add their parameter names
-// (new_x_y), else their parameter types (pick_f64), else a number. Longer arities of one overload
+// The overload taking the fewest arguments keeps `base`; the others add the names of their
+// required parameters (new_x_y), else of all their parameters, else their parameter types
+// (pick_f64), else a number. Longer arities of one overload
 // add "with" and the last parameter's name (add_with_c).
 std::vector<Variant> Generator::plan_variants(const std::vector<Overload>& overloads, const std::string& base) const {
-    struct Candidate { const Overload* overload; std::vector<std::size_t> arities; std::string by_name, by_type; std::size_t minimum; };
+    struct Candidate { const Overload* overload; std::vector<std::size_t> arities; std::string by_required, by_name, by_type; std::size_t minimum; };
     std::vector<Candidate> candidates;
     std::set<std::string> seen;
     for (const auto& overload : overloads) {
         const auto& function = *overload.function;
         const std::size_t first = overload.receives_self ? 1 : 0;
         const std::size_t required = function.parameters.size() - function.default_arguments;
-        Candidate candidate{&overload, {}, {}, {}, 0};
+        Candidate candidate{&overload, {}, {}, {}, {}, 0};
         for (std::size_t arity = std::max(required, first); arity <= function.parameters.size(); ++arity) {
             std::string key;
             for (std::size_t i = first; i < arity; ++i) key += parameter_type(function.parameters[i]) + ",";
@@ -622,10 +623,18 @@ std::vector<Variant> Generator::plan_variants(const std::vector<Overload>& overl
             candidate.by_type += "_" + word(parameter_type(function.parameters[i]));
         }
         if (!named) candidate.by_name.clear();
+        // The names of the parameters its shortest function takes (new_x_y_knots, whose longer
+        // arity adds with_degree), when they tell it apart.
+        if (named)
+            for (std::size_t i = first; i < candidate.arities.front(); ++i) candidate.by_required += "_" + snake_words(function.parameter_names[i]);
         candidates.push_back(candidate);
     }
     std::size_t primary = 0;
     for (std::size_t i = 1; i < candidates.size(); ++i) if (candidates[i].minimum < candidates[primary].minimum) primary = i;
+    // A keyword's escape (box_) is dropped before a suffix: box_with_color, not box__with_color.
+    const auto joinable = [](const std::string& name) {
+        return name.size() > 1 && name.back() == '_' && rust_keyword(name.substr(0, name.size() - 1)) ? name.substr(0, name.size() - 1) : name;
+    };
     std::vector<Variant> result;
     for (std::size_t c = 0; c < candidates.size(); ++c) {
         const auto& candidate = candidates[c];
@@ -638,8 +647,9 @@ std::vector<Variant> Generator::plan_variants(const std::vector<Overload>& overl
                     if (o != c && candidates[o].*field == value) return false;
                 return true;
             };
-            if (unique(&Candidate::by_name)) stem += candidate.by_name;
-            else if (unique(&Candidate::by_type)) stem += candidate.by_type;
+            if (unique(&Candidate::by_required)) stem = joinable(stem) + candidate.by_required;
+            else if (unique(&Candidate::by_name)) stem = joinable(stem) + candidate.by_name;
+            else if (unique(&Candidate::by_type)) stem = joinable(stem) + candidate.by_type;
             else stem += std::to_string(c + 1);
             if (rust_keyword(stem)) stem += "_";
         }
@@ -647,7 +657,7 @@ std::vector<Variant> Generator::plan_variants(const std::vector<Overload>& overl
         const std::size_t first = candidate.overload->receives_self ? 1 : 0;
         for (std::size_t a = 0; a < candidate.arities.size(); ++a) {
             const auto arity = candidate.arities[a];
-            std::string name = stem;
+            std::string name = a > 0 ? joinable(stem) : stem;
             if (a > 0) {
                 const auto cpp = arity - 1 < function.parameter_names.size() ? function.parameter_names[arity - 1] : std::string();
                 name += "_with_" + (cpp.empty() || !identifier(cpp) ? "arg" + std::to_string(arity - first) : snake_words(cpp));
@@ -1217,7 +1227,7 @@ std::string Generator::crate_doc() const {
                       "`Shape::from_impl(imp, ...)`: C++ calls the trait's methods; [`implementation`] returns the Rust value.");
     comment.heading("Overloads and default arguments");
     comment.paragraph("Rust has no overloading: each C++ overload is its own function. The one taking the fewest arguments keeps the "
-                      "name; the others add their parameter names (`new_x_y`), else their parameter types (`pick_f64`), else a number. "
+                      "name; the others add the names of their required parameters (`new_x_y`), else of all their parameters, else their parameter types (`pick_f64`), else a number. "
                       "An overload with default arguments has one function per arity: the shortest keeps the name, the longer ones add "
                       "`with` and their last parameter (`add_with_b`, `add_with_c`). C++ resolves overloads again at run time.");
     comment.heading("Errors");

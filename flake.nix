@@ -35,6 +35,40 @@
           export NIX_CFLAGS_COMPILE
         '';
 
+        # The Swift packages (cmake/SwiftExample.cmake). The toolchain ships its
+        # own clang, so it stays off PATH: CMake finds swiftc and swift-package
+        # through these roots.
+        swiftHook = ''
+          export ROSETTA_SWIFT_ROOT=${pkgs.swift}
+          export ROSETTA_SWIFT_PACKAGE_ROOT=${pkgs.swiftPackages.swiftpm}
+        '';
+
+        # The Free Pascal units (cmake/PascalExample.cmake): CMake finds fpc
+        # through this root.
+        pascalHook = ''
+          export ROSETTA_FPC_ROOT=${pkgs.fpc}
+        '';
+
+        # The Dart packages (cmake/DartExample.cmake): CMake finds dart
+        # through this root.
+        dartHook = ''
+          export ROSETTA_DART_ROOT=${pkgs.dart}
+        '';
+
+        # The Ada packages (cmake/AdaExample.cmake): CMake finds gnatmake
+        # through this root (not on PATH: GNAT's gcc would shadow the C++ toolchain).
+        adaHook = ''
+          export ROSETTA_GNAT_ROOT=${pkgs.gnat}
+        '';
+
+        # The Objective-C classes (cmake/ObjcExample.cmake): CMake finds
+        # GNUstep Base (Foundation) and libobjc2 through these roots.
+        objcHook = ''
+          export ROSETTA_GNUSTEP_BASE_ROOT=${pkgs.gnustep-base.dev}
+          export ROSETTA_GNUSTEP_BASE_LIB=${pkgs.gnustep-base.lib}
+          export ROSETTA_LIBOBJC_ROOT=${pkgs.gnustep-libobjc}
+        '';
+
         # README chunk shells. MEP runs each chunk with its language's usual
         # command (lua, Rscript, python3, ...) inside `nix develop .#readme-NAME`.
         # Entering the shell builds that backend's modules in
@@ -270,6 +304,10 @@
           # PHP with the FFI extension (cmake/PhpExample.cmake).
           (pkgs.php.withExtensions ({ enabled, all }: enabled ++ [ all.ffi ]))
           pkgs.perl
+          # SWI-Prolog and its foreign interface headers (cmake/PrologExample.cmake).
+          pkgs.swi-prolog
+          # GHC and Haddock (cmake/HaskellExample.cmake).
+          pkgs.ghc
           rWithR6
         ]
         ++ gnuApl
@@ -301,11 +339,11 @@
         packages.rosetta = rosetta;
         devShells.default = pkgs.mkShell {
           packages = developmentPackages;
-          shellHook = fortranHook + lispHook + gnuAplHook;
+          shellHook = fortranHook + lispHook + gnuAplHook + swiftHook + pascalHook + dartHook + adaHook + objcHook;
         };
         devShells.readme-shell = pkgs.mkShell {
           packages = developmentPackages;
-          shellHook = fortranHook + lispHook + gnuAplHook;
+          shellHook = fortranHook + lispHook + gnuAplHook + swiftHook + pascalHook + dartHook + adaHook + objcHook;
         };
         devShells.readme-lua = chunkShell {
           name = "lua";

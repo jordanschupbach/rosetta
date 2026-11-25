@@ -6,7 +6,7 @@ declare(strict_types=1);
 
 require $argv[1];
 
-use Names\{Base, Closure, Complex_, Counted, Cursor, Leaf, List_, Mode, Named, NativeObject_, Object_, Point, Point_, Thing};
+use Names\{Base, Closure, Complex_, Counted, Cursor, Grid, Leaf, List_, Mode, Named, NativeObject_, Object_, Point, Point_, Thing};
 use function Names\{as_named, count, counted_of, describe_base, echo_, label_of, mode_value, point_x, point_y, print_, strlen};
 
 $checks = 0;
@@ -83,6 +83,16 @@ check($leaf->scale2(2.0, 3.0) === 6.0 && $leaf->scale(2.0) === 2.0, 'a hiding me
 check($leaf->size2() === 'big' && $leaf->size() === 1, 'a hiding method with another result');
 $deep = new Deep();
 check(describe_base($deep) === 'deep leaf' && $deep->describe() === 'deep leaf', 'override three levels deep');
+
+// Overloads returning void merge into a void method; a nullable callable with a nullable result.
+$grid = new Grid();
+$grid->fill(2);
+$grid->fill(3, 2);
+check($grid->total === 8, 'void overloads');
+check($grid->refine(4) === 4 && $grid->refine(4, fn (int $d): ?int => $d * 10) === 40 && $grid->refine(4, fn (int $d): ?int => null) === -1,
+    'an optional callable');
+check(str_contains($source, 'public function fill(int $value, ?int $times = null): void') &&
+    str_contains($source, '@param (callable(int): (int|null))|null $factory'), 'void overloads and callable documentation');
 
 check(str_contains($source, 'class List_ extends NativeObject') && str_contains($source, 'function print_('), 'generated names');
 echo "PHP names passed ($checks checks)\n";

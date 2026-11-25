@@ -462,6 +462,7 @@ sub call {
         my $done = eval {
             my $data = pack('L', scalar @$arguments);
             $data .= encode($_, \@functions) for @$arguments;
+            flush_output();
             ($status, $result) = _call($index, $data);
             1;
         };
@@ -582,11 +583,22 @@ sub invoke {
     return encode($result, []);
 }
 
+# Perl buffers STDOUT while C++ writes std::cout and stdout directly (and flushes them after each
+# call and before each callback): STDOUT is flushed before C++ runs, so piped output stays in order.
+sub flush_output {
+    my $handle = select;
+    if (defined fileno(STDOUT)) { select(STDOUT); local $| = 1; }
+    select($handle);
+    return;
+}
+
 sub invoke_hook {
     my ($kind, $id, $generic, $data) = @_;
     local $@;
     my $out;
-    return (0, $out) if eval { $out = invoke($kind, $id, $generic, $data); 1 };
+    my $done = eval { $out = invoke($kind, $id, $generic, $data); 1 };
+    flush_output();
+    return (0, $out) if $done;
     my $message = save_cause($@);
     utf8::encode($message) if utf8::is_utf8($message);
     return (2, text("\x05", $message));

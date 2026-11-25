@@ -52,10 +52,17 @@ A language is checked off when every item below holds.
 | Go | ✅ (godoc, cgo) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (`go run`) | ✅ |
 | OCaml | ✅ (odoc `.mli`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (`ocaml`) | ✅ |
 | APL (GNU, Dyalog) | ✅ (GNU native `⎕FX`, `⍝` docs; Dyalog not done) | ☐ (none) | ✅ | ✅ | ✅ (written) | ☐ | ✅ (`apl --script`) | ✅ |
-| Visual Basic | ✅ (XML doc comments, `.vbproj`) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
-| Rust | ✅ (rustdoc, Cargo crate) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
-| PHP | ✅ (PHPDoc, one file over FFI) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
-| Perl | ✅ (POD, module over XS glue) | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
+| Visual Basic | ✅ (XML doc comments, `.vbproj`) | ✅ | ✅ | ✅ | ✅ (written) | ✅ | ✅ (`dotnet run`) | ✅ |
+| Rust | ✅ (rustdoc, Cargo crate) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ (`cargo run`) | ✅ |
+| PHP | ✅ (PHPDoc, one file over FFI) | ✅ | ✅ | ✅ | ✅ (vendored) | ✅ | ✅ (`php`) | ✅ |
+| Perl | ✅ (POD, module over XS glue) | ✅ | ✅ | ✅ | ✅ (vendored) | ✅ | ✅ (`perl`) | ✅ |
+| Swift | ✅ (DocC, Swift package) | ✅ | ✅ | ✅ | ✅ (vendored) | ✅ | ✅ (`swift`) | ✅ |
+| Pascal | ✅ (XML doc comments, Free Pascal unit) | ✅ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
+| Dart | ✅ (dartdoc, Dart package) | ✅ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
+| Ada | ✅ (GNATdoc, Ada package) | ✅ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
+| Objective-C | ✅ (`///` doc comments, `.h` and `.m`) | ✅ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
+| Prolog | ✅ (PlDoc, SWI-Prolog module over foreign glue) | ✅ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
+| Haskell | ✅ (Haddock, GHC module over the FFI) | ✅ | ☐ | ☐ | ☐ | ☐ | ☐ | ☐ |
 
 "Run button ✅" above means only that mep has a default for the file extension. Each language still has to show that a datamunge example runs from its `CMD:` header.
 
@@ -254,3 +261,19 @@ Entries are added as each language is checked off.
   - OCaml skips the same 17 declarations as Java, Tcl and Ruby.
 - mep: no change needed. `mep-ocaml-lsp --doc` shows `Datamunge.seql`, `Datamunge.DataFrame` and `Datamunge.DataFrame.select`; hover works on `DataFrame.select df ...`, `DataFrame.sort_by` after `|> fun df ->`, `Data.iris () |> DataFrame.nrows` and module names in `examples/ocaml` (0.2-0.6 s per request including server start; first lookups in the datamunge checkout can take seconds on a cold disk cache while the workspace is indexed).
 - Open: floats print with `%g` (`6` where Tcl and Java print `6.0`); glmm_ex, lmm_ex and timeseries_ex simulate with their own generators, as the Tcl and Java ports do, so those sections differ between languages.
+
+### datamunge: Visual Basic through Haskell (2026-11-22)
+- datamunge `src/datamunge<lang>` (rosetta, 16 parts each; the C# `bindings.hpp`/`policy.json` with the language's bindings namespace) for Visual Basic, Rust, PHP, Perl, Swift, Pascal, Dart, Ada, Objective-C, Prolog and Haskell. The SWIG `rustdatamunge`, `datamungePHP` and `perldatamunge` are removed. Each has prebuild/build/test/run/run-all recipes (repl for Rust, PHP, Perl, Prolog and Haskell), a dev shell, a nix package and a check, a smoke test in `tests/<lang>` (13-16 checks: containers, pairs, a director overriding `Callback::call`, a callback's own exception coming back, C++ exception kinds, `DataFrame`, the `data` namespace), and the 31 examples with `CMD:` headers. All 31 run in every language; 29 print exactly the C# output (with csharp→lang). The two that differ do so in every language: `hypothesis_tests_ex` (the C# reference links an older `libdatamunge.so`, last digits of tiny p-values) and `optim_advanced_ex` (C#'s default `ToString()` text of classes without `to_string`).
+- Packaging: Swift uses a second nixpkgs pin (`nixpkgs-swift`, no cached Swift at datamunge's pin) and swiftc without SwiftPM; Pascal installs the compiled unit, Ada the compiled package (read-only `.ali`), Objective-C `libDM` (clang, ARC, GNUstep 2.0), Prolog `prolog/datamunge.pl` beside `../lib`, Haskell a GHC package built with Cabal's `Setup` and registered in `lib/haskell/package.db`. PHP needs FFI: the shells now use nixpkgs PHP 8.4 with `ffi` instead of php-from-source.
+- rosetta fixes found by datamunge (each with a regression test; suites green):
+  - Rust: overload names use the required parameters' names (`new_x_y_knots`), and a keyword escape is dropped before a suffix (`box_with_color`, not `box__with_color`).
+  - PHP: merged overloads with the same result declared it twice (`void` methods returned a value); nullable callables are parenthesized in PHPDoc (`(callable(int): (int|null))|null`).
+  - Perl and Pascal: the language's buffered stdout is flushed before each native call and after each callback (Perl `$|`, Pascal `Output`), so piped output keeps its order with C++ (`say_around` checks).
+  - Dart: nullable function types were `(F Function(...))?`, which Dart reads as a record; now `F Function(...)?`.
+  - Ada: a class named like a runtime operation (`Image`) or a `Native_Error_Kind` literal (`Callback`) now gets `_Access`.
+  - Prolog: `'$rosetta_member'/2` was defined after the directive that loads the library, so loading without `MODULE_PROLOG_LIBRARY` failed; new `prolog_*_beside` ctests load the library from beside the module.
+  - Dart, Objective-C, Pascal, Ada: a `to_string` whose parameters all have defaults (`DataFrame::to_string(max_rows = 10)`) is now the native conversion (`toString([int? maxRows])`, `-description`, `ToString` override plus overload, `Image` override plus overload), as Swift and Rust already did.
+  - All C ABI backends: C++ output is flushed when a call throws too (`lisp_full_runtime.hpp`).
+- Open:
+  - Ownership: factory methods returning raw pointers (`[[nodiscard]] DataFrame* select(...) const`, `Tensor* reshape(...)`, `data::iris()`, ...) are wrapped as borrowed from the receiver in every language: the result dies with its receiver and its C++ object is never deleted (Ada measured 200 x `reshape` of 1M elements: 54 MB → 1.6 GB). The policies list only `task_batch_create` as `owned`; these need `owned` entries (or a rule for `[[nodiscard]] T*` factories).
+  - Classes without `to_string` print only their name; Rosetta could give them the C++ class name.

@@ -749,9 +749,9 @@ void Generator::emit_group(std::ostream& out, const Group& group, const ClassPla
     const auto& front = group.overloads.front();
     const auto& function = *front.function;
     std::string what;
-    if (front.extension) what = "C++ C<" + pod_escape(function.qualified_name()) + ">";
-    else if (plan) what = "the C++ method C<" + pod_escape(plan->record->qualified_name() + "::" + function.name) + ">";
-    else what = "C++ C<" + pod_escape(function.qualified_name()) + ">";
+    if (front.extension) what = "C++ `" + function.qualified_name() + "`";
+    else if (plan) what = "the C++ method `" + plan->record->qualified_name() + "::" + function.name + "`";
+    else what = "C++ `" + function.qualified_name() + "`";
     std::string call = name;
     if (plan) call = (group.is_static ? package : "$" + snake_words(plan->name)) + "->" + name;
     const auto pod = group_doc(group.overloads, sig, what, call);
@@ -766,7 +766,7 @@ void Generator::emit_enum(std::ostream& out, const std::string& qualified) const
     const auto& enumeration = *enums_.at(qualified);
     const auto& package = packages_.at(qualified);
     const auto& cases = enum_cases_.at(qualified);
-    auto pod = doc_of(enumeration.documentation, "The C++ enumeration C<" + pod_escape(qualified) + ">.");
+    auto pod = doc_of(enumeration.documentation, "The C++ enumeration `" + qualified + "`.");
     pod.add("Its enumerators are constants (C<" + package + "::" + (cases.empty() ? std::string("X") : cases.front()) +
             ">) of their integer values; C++ takes and returns the integers.");
     std::vector<std::string> items;
@@ -786,7 +786,7 @@ void Generator::emit_class(std::ostream& out, const std::string& owner) const {
     const auto& plan = classes_.at(owner);
     const auto& record = *plan.record;
     const auto& package = packages_.at(owner);
-    auto pod = doc_of(record.documentation, "Wraps the C++ class C<" + pod_escape(owner) + ">.");
+    auto pod = doc_of(record.documentation, "Wraps the C++ class `" + owner + "`.");
     std::vector<std::string> bases;
     for (const auto& base : plan.bases) bases.push_back(packages_.at(base));
     pod.add("Inherits from " + (bases.empty() ? "L<" + package_ + "::NativeObject|/" + package_ + "::NativeObject>"
@@ -838,7 +838,7 @@ void Generator::emit_class(std::ostream& out, const std::string& owner) const {
     if (constructor_overloads_.count(owner)) {
         const auto& sig = constructor_sigs_.at(owner);
         const auto& overloads_ = constructor_overloads_.at(owner);
-        auto about = group_doc(overloads_, sig, "the C++ constructor C<" + pod_escape(owner) + ">", package + "->new");
+        auto about = group_doc(overloads_, sig, "the C++ constructor `" + owner + "`", package + "->new");
         if (plan.director) about.add("The object of a Perl subclass is a C++ subclass whose virtual methods call the Perl methods.");
         out << "\n=head2 new\n\n" << about.render() << "\n\n=cut\n\nsub new {\n    my $class = shift;\n    my $self = bless {}, ref($class) || $class;\n";
         std::vector<std::string> transforms;
@@ -878,7 +878,7 @@ void Generator::emit_class(std::ostream& out, const std::string& owner) const {
             out << "    " << runtime_ << "::binding_error(" << perl_string(package + "::" + accessor + " is read-only") << ");\n}\n";
     }
     for (const auto& constant : plan.constants) {
-        auto about = doc_of(*constant.documentation, "The C++ constant C<" + pod_escape(constant.expression) + ">.");
+        auto about = doc_of(*constant.documentation, "The C++ constant `" + constant.expression + "`.");
         about.add("A class method returning " + pod_escape(perl_type(*constant.type)) + ".");
         out << "\n=head2 " << constant_names_.at(&constant) << "\n\n" << about.render() << "\n\n=cut\n\nsub " << constant_names_.at(&constant)
             << " { return " << runtime_ << "::call(" << constant.index << ", []) }\n";
@@ -1181,7 +1181,7 @@ GeneratedPerlSource Generator::run() {
     }
     if (!constants.empty()) perl << "\n=head1 CONSTANTS\n\nFunctions returning the values of the C++ constants (exported on request, and by C<:all>).\n\n=cut\n";
     for (const auto& constant : constants) {
-        auto about = doc_of(*constant.documentation, "The C++ constant C<" + pod_escape(normalize(constant.expression)) + ">.");
+        auto about = doc_of(*constant.documentation, "The C++ constant `" + normalize(constant.expression) + "`.");
         about.add("Returns " + pod_escape(perl_type(*constant.type)) + ".");
         const auto& name = constant_names_.at(&constant);
         perl << "\n=head2 " << name << "\n\n" << about.render() << "\n\n=cut\n\nsub " << name << " { return " << runtime_ << "::call(" << constant.index << ", []) }\n";

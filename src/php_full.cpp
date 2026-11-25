@@ -271,6 +271,24 @@ std::string declaration(std::vector<std::string> types) {
     if (has_null) unique.push_back("null");
     return join(unique, "|");
 }
+// A PHPDoc type that also allows null: unchanged when null is already one of its top-level
+// members; a callable type is parenthesized first ((callable(int): int)|null).
+std::string or_null(const std::string& doc) {
+    if (doc.rfind("callable(", 0) == 0) return "(" + doc + ")|null";
+    int depth = 0;
+    std::size_t start = 0;
+    for (std::size_t i = 0; i <= doc.size(); ++i) {
+        const char c = i < doc.size() ? doc[i] : '|';
+        if (c == '<' || c == '(' || c == '{' || c == '[') ++depth;
+        else if (c == '>' || c == ')' || c == '}' || c == ']') --depth;
+        else if (c == '|' && depth == 0) {
+            if (doc.compare(start, i - start, "null") == 0) return doc;
+            start = i + 1;
+        }
+    }
+    return doc + "|null";
+}
+
 std::string doc_union(const std::vector<std::string>& docs) {
     std::vector<std::string> unique;
     for (const auto& doc : docs)
@@ -408,7 +426,7 @@ PhpType Generator::class_type(const std::string& qualified) const {
 
 PhpType nullable(PhpType type) {
     type.hint = declaration([&] { auto m = members(type.hint); m.push_back("null"); return m; }());
-    if (type.doc.find("null") == std::string::npos) type.doc += "|null";
+    type.doc = or_null(type.doc);
     return type;
 }
 
@@ -488,7 +506,8 @@ PhpType Generator::php_type(const Type& type, bool param) const {
             std::vector<std::string> items;
             for (std::size_t i = 1; i < function.arguments.size(); ++i) items.push_back(php_type(function.arguments[i], false).doc);
             const auto result = function.arguments.empty() ? std::string("void") : php_type(function.arguments[0], false).doc;
-            PhpType callable{"callable", "callable(" + join(items, ", ") + "): " + result, {}};
+            // A union result is parenthesized: callable(int): (Shape|null).
+            PhpType callable{"callable", "callable(" + join(items, ", ") + "): " + (result.find('|') != std::string::npos ? "(" + result + ")" : result), {}};
             callable.callable = param;
             return callable;
         }
@@ -629,6 +648,11 @@ Sig Generator::signature_of(const std::vector<Overload>& overloads, bool is_stat
         param.default_value = defaults[p].size() == 1 && having[p] == overloads.size() && !defaults[p].begin()->empty() ? *defaults[p].begin() : "null";
         if (param.default_value == "null") param.types.push_back("null");
     }
+    // Overloads with the same result give it once (two void overloads are void, not void|void).
+    std::vector<std::string> distinct;
+    for (const auto& result : sig.results)
+        if (std::find(distinct.begin(), distinct.end(), result) == distinct.end()) distinct.push_back(result);
+    sig.results = distinct;
     // A mix of void and other results is mixed.
     const bool some_void = std::find(sig.results.begin(), sig.results.end(), "void") != sig.results.end();
     if (some_void && std::any_of(sig.results.begin(), sig.results.end(), [](const std::string& r) { return r != "void"; })) sig.results = {"mixed"};
@@ -823,7 +847,7 @@ Doc Generator::group_doc(const std::vector<Overload>& overloads, const Sig& sig,
     }
     add_notes(comment, doc);
     for (const auto& param : sig.params)
-        comment.tag("@param " + doc_union(param.docs) + (param.optional && param.default_value == "null" ? "|null" : "") + " " +
+        comment.tag("@param " + (param.optional && param.default_value == "null" ? or_null(doc_union(param.docs)) : doc_union(param.docs)) + " " +
                     (param.byref ? "&" : "") + "$" + param.name + (param.description.empty() ? "" : " " + param.description));
     if (!(sig.results.size() == 1 && sig.results[0] == "void")) {
         auto text = one_line(doc.returns);

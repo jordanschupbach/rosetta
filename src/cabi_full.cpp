@@ -983,7 +983,7 @@ void CabiGenerator::emit_cpp(std::string& source, std::vector<std::string>& part
         const auto& enumeration = *enums_.at(qualified);
         std::string entries;
         for (std::size_t i = 0; i < enumeration.enumerators.size(); ++i) {
-            const auto label = renamed(qualified + "::" + enumeration.enumerators[i], enumeration.enumerators[i]);
+            const auto label = enum_label(qualified, i);
             const auto& value = enumeration.enumerator_values[i];
             const bool negative = !value.empty() && value.front() == '-';
             const bool big = !negative && (value.size() > 19 || (value.size() == 19 && value > "9223372036854775807"));

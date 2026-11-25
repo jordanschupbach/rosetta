@@ -1,8 +1,8 @@
 > Rosetta
 
-Rosetta generates source code that connects C\+\+ libraries to other languages through their native extension or FFI APIs. Lua uses a Lua 5.4 C API module loaded with `require`; R uses a native `.Call` bridge with R6, S3 or S4 interfaces; Python and Ruby use native extensions with owned classes; JavaScript uses a Node-API addon with TypeScript declarations; Octave uses native `.oct` modules with owned objects; Julia uses a generated `ccall` module and C ABI shared library; Java uses compiled Java classes and JNI libraries; C# uses generated .NET APIs and C ABI libraries; Visual Basic uses generated VB.NET classes over the same kind of C ABI library; Rust uses a generated Cargo crate over the same kind of C ABI library; PHP uses a generated PHP file that loads the same kind of C ABI library through the FFI extension; Perl uses a generated module over the same kind of C ABI library, which carries a small XS glue loaded with DynaLoader; Fortran uses generated `ISO_C_BINDING` modules and C ABI libraries; Common Lisp uses a generated CFFI package and C ABI shared library; Tcl uses Tcl 9 stub-enabled extensions with object commands; Guile Scheme uses libguile extensions loaded by a generated module; OCaml uses C stubs declared as externals in a generated module, for both bytecode and native code; Go uses cgo packages that call C\+\+ stubs in a static archive; APL uses a C ABI library that Dyalog calls through `⎕NA` and GNU APL through a generated native function; COBOL uses generated copybooks of parameter records passed to C\+\+ stubs.
+Rosetta generates source code that connects C\+\+ libraries to other languages through their native extension or FFI APIs. Lua uses a Lua 5.4 C API module loaded with `require`; R uses a native `.Call` bridge with R6, S3 or S4 interfaces; Python and Ruby use native extensions with owned classes; JavaScript uses a Node-API addon with TypeScript declarations; Octave uses native `.oct` modules with owned objects; Julia uses a generated `ccall` module and C ABI shared library; Java uses compiled Java classes and JNI libraries; C# uses generated .NET APIs and C ABI libraries; Visual Basic uses generated VB.NET classes over the same kind of C ABI library; Rust uses a generated Cargo crate over the same kind of C ABI library; PHP uses a generated PHP file that loads the same kind of C ABI library through the FFI extension; Perl uses a generated module over the same kind of C ABI library, which carries a small XS glue loaded with DynaLoader; Swift uses a generated Swift package whose C module declares the same kind of C ABI library; Free Pascal uses a generated unit that links the same kind of C ABI library with `external` declarations; Dart uses a generated package that loads the same kind of C ABI library through `dart:ffi`; Ada uses a generated Ada 2022 package whose body imports the same kind of C ABI library; Objective-C uses generated Foundation classes (ARC, GNUstep or Apple) that call the same kind of C ABI library directly; SWI-Prolog uses a generated module of predicates over the same kind of C ABI library, which carries a small foreign glue loaded with `load_foreign_library`; Haskell uses a generated GHC module that calls the same kind of C ABI library through the FFI; Fortran uses generated `ISO_C_BINDING` modules and C ABI libraries; Common Lisp uses a generated CFFI package and C ABI shared library; Tcl uses Tcl 9 stub-enabled extensions with object commands; Guile Scheme uses libguile extensions loaded by a generated module; OCaml uses C stubs declared as externals in a generated module, for both bytecode and native code; Go uses cgo packages that call C\+\+ stubs in a static archive; APL uses a C ABI library that Dyalog calls through `⎕NA` and GNU APL through a generated native function; COBOL uses generated copybooks of parameter records passed to C\+\+ stubs.
 
-Rosetta itself is implemented in C\+\+17, built with CMake, and tested with C\+\+, Lua, R, Python, JavaScript, Ruby, Octave, Julia, Java, C#, Visual Basic, Rust, PHP, Perl, Fortran, Common Lisp, Tcl, Guile Scheme, OCaml, Go, GNU APL and COBOL. This is a working prototype. It parses real C\+\+ with Clang, keeps declarations in a shared model, and emits native bindings. Its long-term goal is coverage of every C\+\+ feature through a native mapping, an explicit adapter, a concrete instantiation, or an opaque handle. An unrestricted C\+\+ program cannot automatically have an equivalent interface in every language; ownership, specialization, and runtime policies sometimes need user input.
+Rosetta itself is implemented in C\+\+17, built with CMake, and tested with C\+\+, Lua, R, Python, JavaScript, Ruby, Octave, Julia, Java, C#, Visual Basic, Rust, PHP, Perl, Swift, Pascal, Dart, Ada, Objective-C, Prolog, Haskell, Fortran, Common Lisp, Tcl, Guile Scheme, OCaml, Go, GNU APL and COBOL. This is a working prototype. It parses real C\+\+ with Clang, keeps declarations in a shared model, and emits native bindings. Its long-term goal is coverage of every C\+\+ feature through a native mapping, an explicit adapter, a concrete instantiation, or an opaque handle. An unrestricted C\+\+ program cannot automatically have an equivalent interface in every language; ownership, specialization, and runtime policies sometimes need user input.
 
 The Lua feature-family demo is complete through generated bindings and explicit native/Lua adapters. See the [feature coverage plan|docs/lua-feature-plan.md] for each contract and the [completion audit|docs/lua-coverage-audit.md] for implementation, test evidence and remaining product work.
 
@@ -99,6 +99,13 @@ Development commands:
 | `just rust-test` | Enter Nix and build/test the Rust crates (cargo, offline), rustdoc checks and generator/CLI checks |
 | `just php-test` | Enter Nix and test the PHP APIs (PHP with FFI), lint checks and generator/CLI checks |
 | `just perl-test` | Enter Nix and test the Perl APIs, `perl -c` and POD checks and generator/CLI checks |
+| `just swift-test` | Enter Nix and compile/test the Swift packages (swiftc), manifest checks and generator/CLI checks |
+| `just pascal-test` | Enter Nix and compile/test the Free Pascal units (fpc, warnings as errors, heap checks) and generator/CLI checks |
+| `just dart-test` | Enter Nix and run the Dart packages' tests (Dart VM, `dart analyze --fatal-infos`) and generator/CLI checks |
+| `just ada-test` | Enter Nix and compile/test the Ada packages (GNAT, Ada 2022, warnings as errors) and generator/CLI checks |
+| `just objc-test` | Enter Nix and compile/test the Objective-C classes (clang, ARC, GNUstep Base and libobjc2, warnings as errors) and generator/CLI checks |
+| `just prolog-test` | Enter Nix and test the SWI-Prolog modules, PlDoc checks and generator/CLI checks |
+| `just haskell-test` | Enter Nix and compile/test the Haskell modules (GHC, `-Wall -Werror`), Haddock checks and generator/CLI checks |
 | `just fortran-test` | Enter Nix and compile/test Fortran modules, native libraries and shared compiler/build checks |
 | `just fortran-demo` | Enter Nix and compile/run the Fortran example |
 | `just r-repl` | Enter Nix and start R with R6, S3 and S4 demos and feature bindings loaded |
@@ -885,7 +892,7 @@ fn main() -> Result<()> {
 
 - A class is a struct holding a handle to the C\+\+ object. Cloning it shares the object, and dropping the last clone releases it (`close()` does so at once; later calls fail with `ErrorKind::Binding`). Classes are `Send + Sync`.
 - A derived class holds its bases and `Deref`s to its primary base, so base methods apply and `&Circle` passes where `&Shape` is expected; `as_shape()` and `From` reach every ancestor (including secondary bases); `cast::<Circle>(&shape)` returns the most-derived class.
-- Rust has no overloading, so each overload is its own function. The one taking the fewest arguments keeps the name; the others add their parameter names (`new_x_y`), else their types (`pick_f64`, `pick_str`). Default arguments give one function per arity (`add`, `add_with_b`, `add_with_c`). C\+\+ resolves the call again at run time. Names are snake_case; keywords get a `_` suffix (`type_`, `match_`). Generated names come first (`close`, `new`, `as_base`), so a C\+\+ member of the same name is numbered (`close_2`).
+- Rust has no overloading, so each overload is its own function. The one taking the fewest arguments keeps the name; the others add the names of their required parameters (`new_x_y`; an overload `f(x, y, k = 3)` is `f_x_y` and `f_x_y_with_k`), else all their parameter names, else their types (`pick_f64`, `pick_str`). Default arguments give one function per arity (`add`, `add_with_b`, `add_with_c`). C\+\+ resolves the call again at run time. Names are snake_case; keywords get a `_` suffix (`type_`, `match_`). Generated names come first (`close`, `new`, `as_base`), so a C\+\+ member of the same name is numbered (`close_2`).
 - Calls that can throw return `Result<T>` with an `Error` whose `kind()` is `InvalidArgument`, `OutOfRange`, ... for C\+\+ exceptions, `Binding` for values that do not convert, and `Callback` for a Rust callback or override that failed or panicked; the original error is `source()`. noexcept functions, field getters and constants return `T` and panic on errors.
 - Virtual methods: each class with virtual methods has a trait (`ShapeImpl`) whose methods default to the C\+\+ implementation, and `Shape::from_impl(imp, ...)` creates a C\+\+ object that calls them. The methods get `this`, the C\+\+ object, whose virtual methods run the C\+\+ implementation (`Base::method()` in C\+\+). Calling a virtual method on the object `from_impl` returns runs the Rust implementation, and `implementation::<T>(&shape)` returns it. C\+\+ may own the object (`unique_ptr`/`shared_ptr` parameters); it keeps the Rust value alive.
 - Types: `int` is `i32`, `size_t` `usize`, `double` `f64`, `char` `char` (one byte), `std::string` `String` (`&str` as a parameter), vectors `Vec<T>` (slices as parameters; `&[impl AsRef<str>]` for strings), `std::map` `BTreeMap`, `std::unordered_map` `HashMap`, sets `BTreeSet`/`HashSet` (maps and sets with float or class keys are `Vec`s of pairs or items), pairs and tuples Rust tuples, `std::optional` and pointers `Option`, `std::complex` `Complex`, `std::function` closures (`impl Fn(..) + Send + Sync + 'static` parameters, `Arc<dyn Fn>` results), mutable references `&mut T` written back, and anything else a `Value`. Enums are newtypes over `i64` with an associated constant per enumerator (`Kind::CIRCLE`; other values pass through), and `Display` writes the C\+\+ name.
@@ -974,6 +981,292 @@ print $c->area, ' ', area_of(Triangle->new), "\n";   # C++ calls the Perl overri
 - The library is found through `MODULE_PERL_LIBRARY` (a path), beside the module, in `lib/` or `../lib`, in `auto/Features/` under `@INC`, else on the loader's search path; `--perl-library` names it. In CMake, use `rosetta_generate_perl(HEADER ... MODULE ... OUTPUT ... PERL_OUTPUT ... PARTS N)` and `rosetta_perl_flags(target)` (cmake/PerlExample.cmake) for Perl's headers and flags.
 
 `tests/test_perl_full.pl` (ctest `perl_full_features`, 316 checks) runs the shared suite on `examples/python_features.hpp`; `tests/test_perl_names.pl` (ctest `perl_full_names`) covers builtins as names, the runtime's names, reserved subs, a renamed virtual method, multiple inheritance, hiding, operators and 64-bit values; `perl_full_*_compile` and `perl_full_*_pod` run `perl -c` and `podchecker`; and `tests/test_perl_capabilities.cpp` covers the generator and CLI.
+
+>> Swift
+
+`--language swift` generates a Swift package (`--swift-output`, default the module name beside OUTPUT): `Package.swift`, the API in `Sources/Features/Features.swift` (the module is `--swift-module`, default the module name in PascalCase), its runtime `Rosetta.swift`, and a C module `CFeatures` that declares the C\+\+ library's five entry points and links it (`--swift-library`). The API is documented with DocC comments. It needs Swift 5.9 or later and only the standard library (Glibc or Darwin; no Foundation). Run `just swift-test` for the runtime, names, manifest, capability and CLI tests.
+
+```{sh, eval=false}
+rosetta api.hpp --language swift --module features --policy api.policy.json \
+  -o generated/features.cpp --swift-output generated/Features --parts 4
+clang++ -std=c++17 -shared -fPIC generated/features*.cpp -o generated/libfeatures.so
+swift build --package-path app -Xlinker -Lgenerated   # app depends on .package(path: "../generated/Features")
+```
+
+```{swift, eval=false}
+import Features
+
+final class Triangle: Shape {
+    override func area() throws -> Double { 6 }
+}
+
+let c = try Circle(2)
+print(try c.area(), try areaOf(Triangle()))   // C++ calls the Swift override
+```
+
+- Classes are Swift classes over `NativeObject` (`try Circle(2)`); the first C\+\+ base is the superclass, and further bases' members are declared again, with an `asBase` property (`thing.asNamed`) to pass the object where a further base is expected. The C\+\+ object is released with the last reference, or at once by `close()`; `cast(Circle.self)` converts to a derived class or a base.
+- Swift subclasses override virtual C\+\+ methods: constructing one creates a C\+\+ subclass whose virtual methods call the Swift methods, and `super.area()` runs the C\+\+ implementation. C\+\+ may own the object; it keeps the Swift object alive, and the same Swift object comes back. Classes C\+\+ declares `final` are `final`.
+- Types and enumerations are UpperCamelCase, everything else lowerCamelCase; keywords are backticked (`` `repeat` ``), and names Swift cannot use as members take an underscore (`init_`, `self_`). A type named like a standard library or runtime type takes an underscore (`String_`), a function named like a standard library function too (`print_`, `min_`); members named like `NativeObject`'s are numbered (`close2`), and so are names that meet in camelCase. A derived class keeps its bases' names, so C\+\+ overrides stay Swift overrides; a method with a base method's parameters but another result takes its own name.
+- Overloads are Swift overloads, one per C\+\+ overload and argument count for default arguments (C\+\+ applies the defaults left out), with unlabeled parameters; C\+\+ resolves the call again at run time.
+- Calls `throw`, except `noexcept` functions, fields (properties) and constants. Operators are static Swift operators (`+`, `==`, `<`, prefix `-` and `!`, `+=` returning the object), `operator[]` a throwing subscript and `at`, `operator()` `callAsFunction`, and `to_string()` the `description`. Enumerations are `RawRepresentable` structs with static members (`Kind.circle`), so any value of the C\+\+ type crosses; C\+\+ constants are properties (`golden`, `Shape.sidesUnknown`); policy submodules are enums of static functions (`Data.unit()`).
+- Types: C\+\+ integers keep their width (`int` is `Int32`, `size_t` `Int`), strings are `String`, `char` `Character`, vectors arrays, sets `Set` (arrays for multisets or keys that are not `Hashable`), maps dictionaries (arrays of tuples otherwise), pairs and tuples tuples, `std::optional` and pointers optionals, `std::complex` `Complex`, `std::function` throwing closures both ways, and other types `NativeValue`. A non-const reference parameter is `inout` and written back.
+- C\+\+ exceptions throw `NativeError` with a `kind` (`.invalidArgument`, `.outOfRange`, `.domainError`, `.lengthError`, `.arithmeticError`, `.native`, `.binding` for values C\+\+ does not accept and closed objects) and a `message`. An error a Swift closure or override throws crosses C\+\+ and is rethrown unchanged. Callbacks work from threads C\+\+ starts.
+- The linker finds the library through `-Xlinker -L<dir>` or `LIBRARY_PATH`, and the program at run time through its rpath or `LD_LIBRARY_PATH`. In CMake, use `rosetta_generate_swift(HEADER ... MODULE ... OUTPUT ... SWIFT_OUTPUT ... PARTS N)`; cmake/SwiftExample.cmake compiles the package with swiftc directly.
+
+`tests/test_swift_full.swift` (ctest `swift_full_features`, 303 checks) runs the shared suite on `examples/python_features.hpp`; `tests/test_swift_names.swift` (ctest `swift_full_names`) covers the runtime's and the standard library's names, keywords, `NativeObject`'s members, a renamed virtual method, multiple inheritance, hiding, operators and 64-bit values; `swift_full_*_manifest` run `swift package dump-package`; and `tests/test_swift_capabilities.cpp` covers the generator and CLI.
+
+>> Pascal
+
+`--language pascal` generates a Free Pascal unit (`--pascal-output`, default `MODULE.pas` beside OUTPUT; the unit is `--pascal-unit`, default the module name) in `objfpc` mode: the runtime, the API and `external` declarations of the C\+\+ library's entry points (`--pascal-library`, default the module name). The API is documented with XML doc comments. It needs Free Pascal 3.2 or later and only `SysUtils` and `Math`. Run `just pascal-test` for the runtime, names, capability and CLI tests.
+
+```{sh, eval=false}
+rosetta api.hpp --language pascal --module features --policy api.policy.json \
+  -o generated/features.cpp --pascal-output generated/features.pas --parts 4
+clang++ -std=c++17 -shared -fPIC generated/features*.cpp -o generated/libfeatures.so
+fpc -Fugenerated -Flgenerated -k-rpath -k$PWD/generated app.pas
+```
+
+```{pascal, eval=false}
+program app;
+{$mode objfpc}{$H+}
+uses features;
+
+type
+  TTriangle = class(TShape)
+  public
+    function Area: Double; override;
+  end;
+
+function TTriangle.Area: Double;
+begin
+  Result := 6;
+end;
+
+var
+  C: TCircle;
+  T: TTriangle;
+begin
+  C := TCircle.Create(2);
+  T := TTriangle.Create;
+  WriteLn(C.Area:0:1, ' ', AreaOf(T):0:1);   // C++ calls the Pascal override
+  T.Free;
+  C.Free;
+end.
+```
+
+- Classes are Pascal classes over `TNativeObject` (`TCircle.Create(2)`); the first C\+\+ base is the parent class, and further bases' members are declared again, with an `AsBase` function (`Thing.AsNamed`) to pass the object where a further base is expected. Classes C\+\+ declares `final` are `sealed`.
+- Ownership: free what you create and what functions return by value; `Close` deletes the C\+\+ object at once. An object a function returns by reference into an argument, a `Cast` or `AsBase` result and an object field belong to the object they came from, and are freed with it. Passing an object C\+\+ takes over (`std::unique_ptr`) closes it; free the Pascal object as usual.
+- Pascal subclasses override virtual C\+\+ methods: constructing one creates a C\+\+ subclass whose virtual methods call the Pascal methods, and `inherited` runs the C\+\+ implementation. The same Pascal object comes back from C\+\+; freeing it while C\+\+ still uses it makes later calls fail with `ENativeError`.
+- Names: types are `T` + PascalCase (`TCircle`, `TKind`), everything else PascalCase, parameters `A` + PascalCase. Pascal ignores case, so names alike but for case are numbered (`GetName`, `GetName2`), as are names `TObject` or `TNativeObject` already use (`Close2`, `Free2`) and routines the unit uses (`Length2`, `Copy2`); keywords are escaped (`&Repeat`), and `Self` and `Result` take an underscore. A type named like a runtime type takes an underscore (`TNativeObject_`). A derived class keeps its bases' names, so C\+\+ overrides stay Pascal overrides; a method with a base method's parameters but another result takes its own name.
+- Overloads are Pascal overloads, one per C\+\+ overload and argument count for default arguments (C\+\+ applies the defaults left out); C\+\+ resolves the call again at run time. Operators are methods (`Add`, `IsEqual`, `Negate`, `AddAssign`), `operator[]` is `At` and the default array property (`V[1]`), `operator()` `Invoke`, and `to_string()` overrides `ToString` (one with default arguments too: its zero-argument call overrides `ToString`, and `ToString(AMaxRows)` overloads it). Enumerations are scoped enumerations with the C\+\+ values (`TKind.Circle`, `TKind(42)` for others) and a `ToString` helper; fields are properties; C\+\+ constants are functions (`Golden`, `TShape.SidesUnknown`); policy submodules are classes of class functions (`Data.&Unit`).
+- Types: C\+\+ integers keep their width (`int` is `Int32`, `size_t` `Int64`), strings are `String`, `char` `AnsiChar`, vectors and sets dynamic arrays (`TArrayOfDouble`, `TBytes` for bytes), maps arrays of `Key`/`Value` records, pairs and tuples records (`First`/`Second`, `Item1`...), `std::optional` an `HasValue`/`Value` record (class pointers are `nil` instead), `std::complex` `TNativeComplex`, `std::function` parameters nested procedural types (global or nested routines) and results `TNative...` objects with `Invoke`, and other types `TNativeValue`. A non-const reference parameter is a `var` parameter, written back.
+- C\+\+ exceptions raise `ENativeError` with a `Kind` (`InvalidArgument`, `OutOfRange`, `DomainError`, `LengthError`, `ArithmeticError`, `Allocation`, `Native`, `Binding` for values C\+\+ does not accept and closed objects). An exception a Pascal routine or override raises crosses C\+\+ and is raised again unchanged. Callbacks work from other threads (use `cthreads` on Unix).
+- fpc finds the library through `-Fl<dir>`, and the program at run time through its rpath (`-k-rpath -k<dir>`) or `LD_LIBRARY_PATH`. In CMake, use `rosetta_generate_pascal(HEADER ... MODULE ... OUTPUT ... PASCAL_OUTPUT ... PARTS N)`; cmake/PascalExample.cmake compiles the tests with fpc.
+
+`tests/test_pascal_full.pas` (ctest `pascal_full_features`, 309 checks) runs the shared suite on `examples/python_features.hpp`; `tests/test_pascal_names.pas` (ctest `pascal_full_names`) covers names alike but for case, keywords, the runtime's names, `TObject`'s and `TNativeObject`'s members, a renamed virtual method, multiple inheritance, hiding, operators, 64-bit values and `var` parameters; both compile with warnings as errors and fail on leaks heaptrc reports; and `tests/test_pascal_capabilities.cpp` covers the generator and CLI.
+
+>> Dart
+
+`--language dart` generates a Dart package (`--dart-output`, default the module name beside OUTPUT): `pubspec.yaml`, the API in `lib/features.dart` (the package is `--dart-package`, default the module name in snake_case) and its runtime `lib/src/rosetta.dart`, a part of the same library. It loads the C\+\+ library (`--dart-library`, default the module name) through `dart:ffi` at the first call, needs Dart 3.3 or later and has no dependencies. The API is documented with dartdoc comments. Run `just dart-test` for the runtime, names, capability and CLI tests.
+
+```{sh, eval=false}
+rosetta api.hpp --language dart --module features --policy api.policy.json \
+  -o generated/features.cpp --dart-output generated/features --parts 4
+clang++ -std=c++17 -shared -fPIC generated/features*.cpp -o generated/libfeatures.so
+FEATURES_DART_LIBRARY=$PWD/generated/libfeatures.so dart run app.dart   # app's pubspec depends on path: generated/features
+```
+
+```{dart, eval=false}
+import 'package:features/features.dart';
+
+class Triangle extends Shape {
+  @override
+  double area() => 6;
+}
+
+void main() {
+  final c = Circle(2);
+  print('${c.area()} ${areaOf(Triangle())}');   // C++ calls the Dart override
+  print(add(1));                                 // C++ applies the default arguments left out
+}
+```
+
+- Classes are Dart classes over `NativeObject` (`Circle(2)`); the first C\+\+ base is the superclass, and further bases' members are declared again, with an `as` getter (`thing.asNamed`) to pass the object where a further base is expected. Classes C\+\+ declares `final` are `final class`.
+- Memory: the garbage collector releases C\+\+ objects (through a `Finalizer`); `close()` deletes one at once, and later calls throw. A reference into another object keeps that object alive. Passing an object C\+\+ takes over (`std::unique_ptr`) closes the Dart wrapper.
+- Dart subclasses override virtual C\+\+ methods: constructing one creates a C\+\+ subclass whose virtual methods call the Dart methods, and `super` runs the C\+\+ implementation. The same Dart object comes back from C\+\+.
+- Dart has no overloading: the overloads of a C\+\+ function and its default arguments are one Dart function. A parameter keeps the type all overloads agree on (else `Object?`), parameters some overloads lack are optional positional parameters (`null` leaves them out, and C\+\+ applies its defaults), and C\+\+ resolves the call again at run time. The result is the type the overloads agree on, their common base class, or `Object?`. A method merges with the base class method of the same name, so overrides stay Dart overrides; one with an incompatible result takes its own name (`size2`).
+- Names: types are UpperCamelCase, everything else lowerCamelCase. Keywords take an underscore (`is_`, `in_`), as do functions named like `dart:core`'s (`print_`), members named like `Object`'s (`hashCode_`) and types named like `dart:core`'s or the runtime's (`String_`, `NativeObject_`); names `NativeObject` uses and names meeting in camelCase are numbered (`close2`, `getName2`). A C\+\+ class named like a `dart:io` type (`File`) shadows it in code importing both: import `dart:io` with a prefix.
+- Operators are Dart operators where Dart has them (`+ - * / % < <= > >= & | ^ << >> ~`, unary `-`, `[]`), else methods (`equals`, `notEquals`, `not`, `addAssign`); `operator[]` is also `at`, `operator()` is `call` (so the object is callable), and `to_string()` overrides `toString` (one whose parameters all have defaults with optional parameters: `toString([int? maxRows])`, so `'$x'` uses its defaults). Enumerations are extension types over `int` (`Kind.circle`, `Kind(42)` for other values) with `values` and `name`; fields are getters and setters; C\+\+ constants are getters (`golden`, `Shape.sidesUnknown`); policy submodules are classes of static methods (`Data.unit()`).
+- Types: C\+\+ integers are `int` (`uint64_t` keeps its bits: values above 2^63−1 are negative), floating point `double`, strings and `char` `String`, vectors `List`, sets `Set`, maps `Map`, multimaps lists of records, byte vectors `Uint8List`, pairs and tuples records (`(double, double)`), `std::optional` and class pointers nullable types, `std::complex` `Complex`, `std::function` Dart function types both ways, and other types `Object?`. A non-const reference parameter is a `Ref<T>` (`Ref([1.0])`), written back.
+- C\+\+ exceptions throw `NativeError` with a `kind` (`invalidArgument`, `outOfRange`, `domainError`, `lengthError`, `arithmeticError`, `allocation`, `native`, `binding` for values C\+\+ does not accept and closed objects). An exception a Dart function or override throws crosses C\+\+ and is thrown again unchanged, with its stack trace.
+- The library is `NativeLibrary.path`, else the environment variable `FEATURES_DART_LIBRARY`, else `libfeatures.so` (`.dylib`, `.dll`) on the system's search path. Callbacks and overrides run on the calling isolate's thread: C\+\+ must not call them from other threads, and one isolate uses the library at a time. In CMake, use `rosetta_generate_dart(HEADER ... MODULE ... OUTPUT ... DART_OUTPUT ... PARTS N)`; cmake/DartExample.cmake runs the tests with the Dart VM and `dart analyze`.
+
+`tests/test_dart_full.dart` (ctest `dart_full_features`, 305 checks) runs the shared suite on `examples/python_features.hpp`; `tests/test_dart_names.dart` (ctest `dart_full_names`) covers keywords, `dart:core`'s and the runtime's names, `Object`'s and `NativeObject`'s members, camelCase collisions, merged overloads and methods, a renamed virtual method, multiple inheritance, operators, 64-bit values and `Ref` parameters; `dart analyze --fatal-infos` checks both packages (ctests `..._analyze`); and `tests/test_dart_capabilities.cpp` covers the generator and CLI.
+
+>> Ada
+
+`--language ada` generates an Ada 2022 package in `--ada-output` (default OUTPUT's directory): the spec `features.ads` (the package is `--ada-package`, default the module name in Ada_Case), the body `features.adb`, which holds the runtime as a nested package, and a GNAT project file `features.gpr`. The spec links the C\+\+ library (`--ada-library`, default the module name) through `pragma Linker_Options`; the package needs only the standard library. The API is documented with GNATdoc comments below each declaration. Run `just ada-test` for the runtime, names, capability and CLI tests.
+
+```{sh, eval=false}
+rosetta api.hpp --language ada --module features --policy api.policy.json \
+  -o generated/features.cpp --ada-output generated --parts 4
+clang++ -std=c++17 -shared -fPIC generated/features*.cpp -o generated/libfeatures.so
+gnatmake -gnat2022 -aIgenerated app.adb -largs -Lgenerated -Wl,-rpath,$PWD/generated
+```
+
+```{ada, eval=false}
+--  shapes.ads: Ada type extensions live at library level
+with Features; use Features;
+package Shapes is
+   type Triangle_Record is new Shape_Record with null record;
+   overriding function Area (Self : Triangle_Record) return Long_Float is (6.0);
+end Shapes;
+
+--  app.adb
+with Ada.Text_IO; with Features; use Features; with Shapes;
+procedure App is
+   C : Circle := New_Circle (2.0);
+   T : Shape := new Shapes.Triangle_Record;
+begin
+   T.Construct_Shape;
+   Ada.Text_IO.Put_Line (C.Area'Image & Area_Of (T)'Image);   --  C++ calls the Ada override
+   Ada.Text_IO.Put_Line (Add (1)'Image);                      --  C++ applies the default arguments left out
+   Free (C);
+   Free (T);
+end App;
+```
+
+- Classes are tagged types (`Circle_Record`, a private extension of `Native_Object_Record`) with an access type (`Circle`) that functions take and return; `New_Circle (2.0)` allocates and constructs. Methods are primitive operations whose first parameter `Self` is the record (mode `in` for const methods, `in out` otherwise), so prefix notation works on access values (`C.Area`). The first C\+\+ base is the parent type; further bases' members are declared again, with an `As_` function (`T.As_Named`) to pass the object where a further base is expected.
+- Memory: Ada has no garbage collection here. `Free` frees an object (deleting the C\+\+ object if it owns it) and sets the access value to null; `Close` deletes the C\+\+ object at once, and later calls raise `Binding_Error`. Objects a function returns by reference or pointer into an argument, `As_` results and object fields belong to the object they came from and are freed with it; free the objects you create and the values functions return. Passing an object C\+\+ takes over (`std::unique_ptr`) closes the Ada object.
+- Ada type extensions override virtual C\+\+ methods: declare the extension at library level, allocate it, and call `Construct_Shape` (a constructor for any object of the class), which creates a C\+\+ subclass whose virtual methods call the Ada operations. A view conversion to the parent (`Circle_Record (Self).Name`) runs the C\+\+ implementation, and the same Ada object comes back from C\+\+.
+- Overloads and default arguments are Ada overloads, one per C\+\+ overload and argument count, so C\+\+ applies the default arguments a call leaves out; C\+\+ resolves the call again at run time. A method with the parameters of a base class method but another result takes its own name (`Size_2`).
+- Names: Ada_Case everywhere (`get_name` and `getName` are both `Get_Name`). Ada ignores case, so names alike but for case, or alike in Ada_Case, are numbered (`Total_2`, `Get_Name_2`), as are members named like `Native_Object_Record`'s operations (`Close_2`, `Image_2`) or like a type (`Kind_2`). Reserved words take `_Kw` (`Begin_Kw`); enumerators named like a reserved word or a type take the enumeration's name (`Circle_Kind`, `Type_Mode`); parameters named like a type take `The_`; classes named like a predefined type take `_Access` (`Integer_Access`, record `Integer_Record`). A module function whose first parameter is a class avoids that class's member names, since prefix notation would find both.
+- Operators are Ada operators where Ada has them (`+ - * / rem < <= > >= and or xor not`, unary `-`), with the object as `Left`; others are functions (`Equals`, `Not_Equals`, `Element` for `[]`, `Call` for `()`, `Add_Assign`, `Shift_Left`). `to_string()` overrides `Image` (one with default arguments too: its zero-argument call overrides `Image`, and `Image (Self, Max_Rows)` overloads it). Enumerations are Ada enumerations with representation clauses (`Custom'Enum_Rep = 7`); a value C\+\+ returns outside them raises `Binding_Error`. Fields are getter functions and `Set_` procedures; C\+\+ constants and static methods are functions prefixed with the class (`Shape_Sides_Unknown`, `Circle_Unit`); policy submodules are nested packages (`Data.Unit`).
+- Types: C\+\+ integers are `Integer`, `Long_Long_Integer`, `Short_Integer` and `Interfaces.Unsigned_8 .. Unsigned_64`, floating point `Long_Float` and `Float`, strings `String`, vectors `Ada.Containers.Vectors` instances (`Long_Float_Vector`, with Ada 2022 aggregates `[1.0, 2.0]`), sets ordered sets, maps ordered maps, multimaps vectors of pairs, pairs and tuples records (`First`/`Second`, `Item_1`..), `std::optional` variant records (`Has_Value`, `Value`), `std::complex` `Complex`, `std::function` parameters access-to-subprogram types (library-level subprograms: `Apply (Twice'Access, 21.0)`) and results function objects with `Call`, and other types `Native_Value`. A non-const reference parameter is an `in out` parameter, written back (strings there are `Unbounded_String`).
+- C\+\+ exceptions raise `Native_Error`, `Invalid_Argument_Error`, `Out_Of_Range_Error`, `Domain_Error`, `Length_Error`, `Arithmetic_Error`, `Allocation_Error` and `Binding_Error` (values C\+\+ does not accept and closed objects); `Error_Kind (E)` gives the kind. An exception an Ada subprogram or override raises crosses C\+\+ and is raised again unchanged.
+- gnatmake finds the package through `-aI<dir>` and the library through `-largs -L<dir>`, and the program at run time through its rpath or `LD_LIBRARY_PATH`; `features.gpr` serves gprbuild. Callbacks may run on other tasks. In CMake, use `rosetta_generate_ada(HEADER ... MODULE ... OUTPUT ... ADA_OUTPUT ... PARTS N)`; cmake/AdaExample.cmake compiles the tests with gnatmake.
+
+`tests/ada/test_ada_full.adb` (ctest `ada_full_features`, 307 checks) runs the shared suite on `examples/python_features.hpp`; `tests/ada/test_ada_names.adb` (ctest `ada_full_names`) covers names alike but for case or in Ada_Case, reserved words, the runtime's and Standard's names, `Native_Object_Record`'s operations, methods named like types, a renamed virtual method, multiple inheritance, hiding, operators, 64-bit values and `in out` parameters; both compile with `-gnatwa -gnatwe` (the generated package included); and `tests/test_ada_capabilities.cpp` covers the generator and CLI.
+
+>> Objective-C
+
+`--language objective-c` generates Objective-C classes in `--objc-output` (default OUTPUT's directory): the header `Features.h` (every generated name starts with `--objc-prefix`, default the module name in PascalCase, which also names the files) and the implementation `Features.m`, which holds the runtime and calls the C\+\+ library's C entry points directly. Compile `Features.m` with `-fobjc-arc -fobjc-arc-exceptions` and link the C\+\+ library (`--objc-library`, default the module name) and Foundation. The classes need Foundation only: GNUstep Base with libobjc2 (`-fobjc-runtime=gnustep-2.0`) or Apple's. The API is documented with `///` comments. Run `just objc-test` for the runtime, names, capability and CLI tests.
+
+```{sh, eval=false}
+rosetta api.hpp --language objective-c --module features --policy api.policy.json \
+  -o generated/features.cpp --objc-output generated --parts 4
+clang++ -std=c++17 -shared -fPIC generated/features*.cpp -o generated/libfeatures.so
+clang -fobjc-arc -fobjc-arc-exceptions -fobjc-runtime=gnustep-2.0 -fblocks -Igenerated generated/Features.m app.m \
+  -Lgenerated -lfeatures -lgnustep-base -lobjc -Wl,-rpath,$PWD/generated -o app
+```
+
+```{objc, eval=false}
+#import "Features.h"
+
+@interface Triangle : FeaturesShape   // an Objective-C subclass overrides virtual methods
+@end
+@implementation Triangle
+- (double)area { return 6; }
+@end
+
+int main(void) {
+    @autoreleasepool {
+        FeaturesCircle* c = [[FeaturesCircle alloc] initWithRadius:2];
+        NSLog(@"%g %g", [c area], [Features areaOf:[Triangle new]]);    // C++ calls the override
+        NSLog(@"%d %d", [Features add:1], [Features add:1 b:2]);        // C++ applies the default arguments left out
+        @try { [[FeaturesCircle alloc] initWithRadius:-1]; }
+        @catch (FeaturesError* e) { NSLog(@"%@ (kind %ld)", e.reason, (long)e.kind); }
+    }
+}
+```
+
+- Memory: ARC. An object releases its C\+\+ object when it is deallocated (C\+\+ deletes it at its next call), or at once with `-close`; later calls raise a binding error. An object a function returns by reference or pointer into an argument keeps that object alive. Passing an object C\+\+ takes over (`std::unique_ptr`) closes it. `-cast:` gives the object as another class of its C\+\+ object (`[shape cast:[FeaturesCircle class]]`, nil if it is not one).
+- Objective-C subclasses override virtual C\+\+ methods: initializing an object of a subclass of a class with virtual methods creates a C\+\+ subclass whose virtual methods send the overriding messages; `super` runs the C\+\+ implementation, and the same Objective-C object comes back from C\+\+, kept alive while C\+\+ holds it.
+- Selectors: constructors are initializers (`init`, `initWithRadius:`, `initWithX:y:`, with `+new` for `init`), methods instance methods, static methods class methods, fields properties, module functions and constants class methods and class properties of the module class (`[Features add:1 b:2]`, `Features.golden`), and policy submodules classes of their own (`FeaturesData`). A selector is the C\+\+ name, then the parameter names (`scale:extra:`). One selector per argument count covers a C\+\+ function's overloads and default arguments: a parameter whose type the overloads disagree on is an `id` (`[Features pick:@1.5]`), a result an `id` unless they agree, and C\+\+ chooses the overload at run time. A method merges with the base class's method of the same name; one whose selector would take other types takes its own name (`size2`), since an override must keep the types. Inherited initializers a class does not have are unavailable.
+- Names: camelCase members and PascalCase types with the prefix (a namespace named like the prefix does not repeat it). NSObject's and the runtime's selectors (`description`, `hash`, `copy`, `init`, `close`, `cast`), C and Objective-C keywords and macros take an underscore (`hash_`, `id_`); other collisions are numbered (`getName2`), and classes named like the runtime's types take an underscore (`FeaturesObject_`). A property keeps its name when a method takes its setter's (`setX:` returning the object): its setter becomes `setXValue:` (`v.x = 5` works). Selectors in the ARC method families (`newValue`, `copyText:`, `initWith:`) are declared `objc_method_family(none)`.
+- Operators are methods (`add:`, `subtract:`, `multiply:`, `neg`, `equals:`, `less:`, `at:` for `[]`, `call:` for `()`, `addAssign:`, `not`); `to_string()` is `-description` (one with default arguments too: `-description` is its zero-argument call, and it keeps its own selectors, `-toString` and `-toString:`). Enums are `NS_ENUM`s over `int64_t` (`uint64_t` for unsigned ones) with prefixed constants (`FeaturesKindCircle`).
+- Types: C\+\+ scalars keep their C types (`int`, `double`, `BOOL`, `char`, `uint64_t`), strings are `NSString`, vectors `NSArray` (of `NSNumber` for scalars; bytes `NSData`), sets `NSSet`, maps `NSDictionary` (an `NSArray` of key-value pairs for class keys and multimaps), pairs and tuples `NSArray`, `std::optional` nullable objects (`NSNumber` for scalars), pointers nullable, `std::complex` `FeaturesComplex`, `std::function` blocks (`FeaturesFunction` inside containers), and other types `id`. A non-const reference parameter is a pointer, written back (`[Features scale:&values factor:3]`).
+- C\+\+ exceptions raise `FeaturesError` (an `NSException`) with a `kind` (`FeaturesErrorKindInvalidArgument`, `OutOfRange`, `DomainError`, `LengthError`, `ArithmeticError`, `Allocation`, `Binding` for values C\+\+ does not accept and closed objects, `Native`, `Callback` for a block's exception C\+\+ replaced) and the C\+\+ message as its reason. An exception a block or an override raises crosses C\+\+ and is raised again unchanged. Blocks may run on other threads.
+- In CMake, use `rosetta_generate_objc(HEADER ... MODULE ... OUTPUT ... OBJC_OUTPUT ... PARTS N)`; cmake/ObjcExample.cmake compiles the tests with clang against GNUstep.
+
+`tests/test_objc_full.m` (ctest `objc_full_features`, 302 checks) runs the shared suite on `examples/python_features.hpp`; `tests/test_objc_names.m` (ctest `objc_full_names`) covers the runtime's names, keywords, NSObject's selectors, method families, a method taking a property's setter, enumerator constants named like classes, a renamed virtual method, multiple inheritance, hiding, operators, a block property, 64-bit values and enums, and pointer parameters; both compile with `-Wall -Wextra -Werror` (the generated files included); and `tests/test_objc_capabilities.cpp` covers the generator and CLI.
+
+>> Prolog
+
+`--language prolog` generates a SWI-Prolog 9+ module `--prolog-output` (default `MODULE.pl` beside OUTPUT; module `--prolog-module`, default the module name in snake_case) holding the predicates, their PlDoc and a small runtime. OUTPUT also carries the foreign glue, so compile the library with SWI-Prolog's headers (`swipl --dump-runtime-variables` names `PLBASE`; the headers are in `$PLBASE/include`); it does not link libswipl. The module loads `lib<library>` (`--prolog-library`, default the module name) from the `MODULE_PROLOG_LIBRARY` environment variable, beside the module, `lib/` or `../lib`, else the foreign search path. Run `just prolog-test` for the runtime, names, PlDoc, capability and CLI tests.
+
+```{sh, eval=false}
+rosetta api.hpp --language prolog --module features --policy api.policy.json -o generated/features.cpp --parts 4
+clang++ -std=c++17 -shared -fPIC -I"$(swipl --dump-runtime-variables | sed -n 's/^PLBASE="\(.*\)";/\1/p')/include" \
+  generated/features*.cpp -o generated/libfeatures.so
+swipl -g "use_module(generated/features)"
+```
+
+```{prolog, eval=false}
+% Extended objects implement virtual methods with their module's override/1 clauses.
+triangle:override(area(Self, Area)) :- object_data(Self, tri(B, H)), Area is B * H / 2.
+loud:override(name(Self, Name)) :- circle_name(Self, N0), string_upper(N0, Name).   % the C++ method inside
+
+demo :-
+    circle_new(2, C), circle_area(C, A),                % A = 12.0
+    add(1, R1), add(1, 2, R2),                          % C++ applies the default arguments left out
+    shape_extend(triangle, tri(4, 3), T), area_of(T, 6.0),   % C++ calls the override
+    scale([1.0, 2.0], 3.0, Values),                     % a non-const reference: an input and an output
+    apply([X, Y]>>(Y is X * 2), 21.0, 42.0),            % callbacks
+    catch(circle_new(-1, _), error(native_error(Kind, Message), _), true).
+```
+
+- Predicates: each C\+\+ function is a family of deterministic predicates, one per argument count, with the result last (`add/2`, `add/3`, `add/4`); C\+\+ chooses the overload by the arguments' types at run time and applies the default arguments left out. Methods take the object first and are prefixed with the class in snake_case (`circle_area(C, A)`); a base class's predicates take derived objects. Constructors are `CLASS_new/N`, fields `CLASS_FIELD/2` and `CLASS_set_FIELD/2` (writable fields only), constants predicates of one argument (`golden/1`, `shape_sides_unknown/1`), policy submodules prefixed predicates (`data_unit/1`), and enumerations fact predicates of their atoms and values (`kind(circle, 0)`). A `void` function has no result argument unless an overload of it returns one (then `null`).
+- Names are claimed by name and arity: SWI-Prolog's system predicates, the runtime's predicates and names an earlier class or member took are numbered (`length_2/2`, `object_data_2/2`, `pipe_line_count_2/2`, class prefixes `point_2`); enumerator atoms avoid `true`, `false` and `null` (`true_2`).
+- Values: integers (unbounded: C\+\+ checks the range) and floats, strings as Prolog strings (atoms are taken too), `bool` as `true`/`false`, a missing value (`std::optional`, null pointers) as `null`, lists, maps as lists of `Key-Value` pairs, pairs as `Key-Value`, tuples as lists, `std::complex` as `complex(Re, Im)`, enumerators as atoms (their integers are taken too), `std::function` as closures (called with the arguments and a result to bind; such predicates are `meta_predicate`s) and C\+\+ objects as blobs. A C\+\+ function a call returns is a closure: `call(F, Args..., Result)`. A non-const reference parameter is an input and an output argument (`scale(Values0, Factor, Values)`). An unbound input raises `instantiation_error`.
+- Memory: an object is released when atom garbage collection reclaims its blob, or at once by `close_object/1`; later calls raise a binding error. Passing an object C\+\+ takes over (`std::unique_ptr`) closes it. `object_class/2` and `object_is_a/2` give its most-derived class.
+- Extended objects: `CLASS_extend(Module, Data, Args..., Object)` creates a C\+\+ subclass whose virtual methods run `Module:override/1` clauses (`override(area(Self, Area)) :- ...`), and the C\+\+ implementation otherwise; calls from Prolog run the override too, and calling the method's predicate inside its own override runs the C\+\+ implementation. `object_data/2` and `object_set_data/2` hold the object's data; C\+\+ keeps an extended object alive while it holds it, and the same blob comes back.
+- Errors: C\+\+ exceptions and values C\+\+ does not accept raise `error(native_error(Kind, Message), _)` with Kind one of `binding`, `invalid_argument`, `out_of_range`, `domain_error`, `length_error`, `arithmetic_error`, `native`, `allocation` and `callback` (a callback failed). An exception a callback or an override raises crosses C\+\+ unchanged.
+- In CMake, use `rosetta_generate_prolog(HEADER ... MODULE ... OUTPUT ... PROLOG_OUTPUT ... PARTS N)` and `rosetta_prolog_flags(<target>)` (cmake/PrologExample.cmake) for the headers.
+
+`tests/test_prolog_full.pl` (ctest `prolog_full_features`, 316 checks) runs the shared suite on `examples/python_features.hpp`; `tests/test_prolog_names.pl` (ctest `prolog_full_names`) covers system predicates as function names, concatenated class prefixes, classes alike but for case, the runtime's names, enumerator atoms, a field and a method of one name, a renumbered virtual method overridden, multiple inheritance, hiding, operators, 64-bit values, writebacks and callbacks; `tests/check_prolog_pldoc.pl` (ctests `prolog_full_*_pldoc`) loads both modules with PlDoc collecting and requires a mode-line comment for every exported predicate and no PlDoc warnings; and `tests/test_prolog_capabilities.cpp` covers the generator and CLI.
+
+>> Haskell
+
+`--language haskell` generates a GHC module `--haskell-output` (default: the last part of the module name plus `.hs` beside OUTPUT; module `--haskell-module`, default the module name in PascalCase, dotted names allowed) and its runtime module `MODULE.Rosetta` in a directory of the same name (`Features.hs` and `Features/Rosetta.hs`), which calls the C ABI library through the FFI. It needs only `base`, `containers` and `bytestring`. Compile the library from OUTPUT, then link the Haskell program with it (`-lMODULE`; `-threaded` is recommended, since C\+\+ may call back from any call). Run `just haskell-test` for the runtime, names, Haddock, capability and CLI tests.
+
+```{sh, eval=false}
+rosetta api.hpp --language haskell --module features --policy api.policy.json -o generated/features.cpp --parts 4
+clang++ -std=c++17 -shared -fPIC generated/features*.cpp -o generated/libfeatures.so
+ghc -threaded -igenerated Main.hs -Lgenerated -lfeatures -optl-Wl,-rpath,generated
+```
+
+```{haskell, eval=false}
+import Data.IORef
+import Features
+
+main :: IO ()
+main = do
+  c <- newCircle 2
+  a <- circleArea c                     -- 12.0
+  s <- shapeArea (toShape c)            -- upcasts are explicit; IsShape functions take any shape
+  r1 <- add 1                           -- C++ applies the default arguments left out
+  r2 <- addWithB 1 2                    -- longer argument counts add With and the parameter
+  p <- pickDouble 1.5                   -- overloads: the shortest keeps the name
+  t <- extendShape shapeOverrides { shapeAreaOverride = Just (\_ -> pure 6) }
+  six <- areaOf t                       -- C++ calls the Haskell override
+  values <- newIORef [1, 2]
+  scale values 3                        -- a non-const reference is an IORef C++ writes back
+  forty2 <- apply (\x -> pure (x * 2)) 21
+  print (a, s, r1, r2, p, six, forty2)
+```
+
+- Functions: every function returns an `IO` action, constants are pure values. Methods take the object first and are prefixed with the class in camelCase (`circleArea`); a class `C` has `newtype C`, a type class `IsC` with an instance for every class derived from it (so `circleArea` takes any circle), the upcast `toC`, and `downcast :: Maybe b` checks the most-derived C\+\+ class. Each C\+\+ overload and argument count is its own function: the overload with the fewest arguments keeps the name, others add their parameter names (`newVec2XY`), else their types (`pickDouble`), and longer argument counts of one overload add `With` and the parameter's name (`addWithB`); C\+\+ resolves the overload again at run time. Constructors are `newC`, fields `cF` and `cSetF` (writable fields only), operators named functions (`vec2Add`, `vec2Equals`, `vec2At`), policy submodules prefixed functions (`dataUnit`), and enumerations data types whose constructors carry the type's name (`KindCircle`, deriving `Eq`, `Ord`, `Show`, `Read`, `Bounded`, `Enum`, with `enumValue`, `enumName`, `enumFromValue` and `enumFromName`).
+- Names: keywords and Prelude names need no escaping behind a class prefix, and the generated code uses only qualified imports, so free functions may be called `map` or `length` and classes `Maybe` or `String` (hide them from the Prelude when importing the module unqualified). Methods claim their names first, then fields, then free functions; a later name spelled like an earlier one gets a prime (`vec2SetX'` for the field `x` beside the method `set_x`, `newWords'` for a free function `new_words`, `wordsCamelCase'` for `camel_case` beside `camelCase`).
+- Values: `Int` for C\+\+ integers (`Word64` for `unsigned long long`; C\+\+ checks the range), `Double`, `Bool`, `Char`, `String` (UTF-8), lists, `ByteString` for `std::vector<unsigned char>`, `Maybe` for `std::optional` and nullable pointers, `Map` and `Set` (association lists for keys without `Ord`), tuples up to four, `Complex Double`, and functions `a -> IO r` for `std::function` (up to four arguments); a C\+\+ function a call returns is a Haskell function. A non-const reference parameter is an `IORef` C\+\+ writes back.
+- Memory: objects are garbage collected (a weak-pointer finalizer releases the C\+\+ object), or released at once by `closeObject`; later calls throw a `BindingError`. An object passed to C\+\+ that takes it over (`std::unique_ptr`) throws a "closed" `BindingError` when used afterwards. A borrowed reference keeps its owner alive.
+- Extended objects: `extendC overrides` creates a C\+\+ subclass object whose virtual methods run the fields of a `COverrides` record (`cOverrides { cAreaOverride = Just (\self -> ...) }`); fields left `Nothing` run the C\+\+ implementation, and `cAreaBase` calls it from inside an override. Calls from Haskell run the override too. C\+\+ keeps an extended object alive while it holds it, and the same Haskell object comes back (`sameObject`).
+- Errors: C\+\+ exceptions and values C\+\+ does not accept throw `CppError { errorKind, errorMessage }` with the kind `BindingError`, `InvalidArgument`, `OutOfRange`, `DomainError`, `LengthError`, `ArithmeticError`, `AllocationError` or `NativeError`. A Haskell exception a callback or an override throws crosses C\+\+ and is thrown again unchanged.
+- Output: the runtime flushes Haskell's `stdout` before each call into C\+\+ and after each callback, so Haskell and C\+\+ output stay in order.
+- Documentation: Doxygen becomes Haddock, with `-- ^` comments on arguments and results, the defaults, the C\+\+ signature, thrown exception kinds and links to the generated names.
+- In CMake, use `rosetta_generate_haskell(HEADER ... MODULE ... OUTPUT ... HASKELL_OUTPUT ... HASKELL_MODULE ... PARTS N)`; cmake/HaskellExample.cmake compiles test programs with GHC.
+
+`tests/test_haskell_full.hs` (ctest `haskell_full_features`, 350 checks, run with `+RTS -A64k` so that the garbage collector runs often) runs the shared suite on `examples/python_features.hpp`; `tests/test_haskell_names.hs` (ctest `haskell_full_names`, 51 checks) covers keywords, classes named like Prelude and runtime types, Prelude names as functions, primes for names a free function or another spelling took, enumerators, 64-bit and unsigned integers, conversions, policy conversions and modules, exception kinds and interleaved standard output; both compile with `-Wall -Werror`; `tests/check_haskell_haddock.cmake` (ctests `haskell_full_*_haddock`) requires 100% Haddock coverage and no Haddock warnings; and `tests/test_haskell_capabilities.cpp` covers the generator and CLI.
 
 >> Fortran
 

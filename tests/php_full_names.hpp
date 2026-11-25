@@ -4,7 +4,9 @@
 // case-insensitively; classes named like the runtime's; members named like NativeObject's or PHP's
 // magic methods; a derived class hiding a method with an incompatible signature; multiple
 // inheritance.
+#include <functional>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -109,5 +111,17 @@ public:
     std::string size() const { return "big"; }
 };
 inline std::string describe_base(const Base& base) { return base.describe(); }
+
+/// Overloads that all return void, and an optional callable whose result is optional.
+struct Grid {
+    int total = 0;
+    void fill(int value) { total += value; }
+    void fill(int value, int times) { total += value * times; }
+    int refine(int depth, std::function<std::optional<int>(int)> factory = {}) {
+        if (!factory) return depth;
+        const auto patch = factory(depth);
+        return patch ? *patch : -1;
+    }
+};
 
 } // namespace names

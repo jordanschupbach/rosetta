@@ -58,6 +58,8 @@ fn main() {
     // Keywords and generated names inside a class.
     let cursor = Cursor::new().unwrap();
     check(cursor.type_().unwrap() == 1 && cursor.match_(2, 3).unwrap() == 6, "keyword methods and parameters");
+    check(cursor.yield_(2).unwrap() == 8 && cursor.yield_with_b(2, 5).unwrap() == 10, "a keyword's longer arities drop the escape");
+    check(cursor.loop_(3).unwrap() == 3 && cursor.loop_x_n(1.5, 2).unwrap() == 3, "a keyword's other overloads drop the escape");
     check(cursor.move_(4).unwrap() == 4 && cursor.position() == 4, "a parameter named self");
     check(cursor.count().unwrap() == 20 && cursor.count_field() == 2, "a field and a method named alike");
     check(cursor.close_2().unwrap() && !cursor.is_closed(), "a C++ close next to the generated close");

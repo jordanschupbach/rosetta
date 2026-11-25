@@ -102,5 +102,26 @@ bump(\$n, \$text);
 check($n == 3 && $text eq 'a!!', 'references written back');
 check(call_twice(sub { $_[0] + 1 }, 1) == 3, 'callback');
 
+# Perl's buffered STDOUT and C++'s std::cout/stdout stay in order (a file, not a terminal).
+{
+    open(my $saved, '>&', \*STDOUT) or die $!;
+    my $path = "names_order_$$.txt";
+    open(STDOUT, '>', $path) or die $!;
+    print 'a';
+    say_around('b', sub { print 'c' });
+    print "d\n";
+    eval { say_then_throw('e') };
+    print "f\n";
+    close(STDOUT);
+    open(STDOUT, '>&', $saved) or die $!;
+    open(my $in, '<', $path) or die $!;
+    local $/;
+    my $written = <$in>;
+    close($in);
+    unlink $path;
+    check($written eq "ab[c]\nd\ne\nf\n", 'output order with C++, also when it throws');
+}
+
+check($source !~ /CE<lt>/ && $source =~ /^Wraps the C\+\+ class C<names::Cursor>\.$/m, 'POD codes in leads are not escaped');
 check($source =~ /^sub print_ \{/m && $source =~ /^package Names::Data_;$/m, 'generated names');
 print "Perl names passed ($checks checks)\n";

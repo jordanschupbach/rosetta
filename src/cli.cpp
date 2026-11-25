@@ -13,6 +13,13 @@
 #include "rosetta/rust.hpp"
 #include "rosetta/php.hpp"
 #include "rosetta/perl.hpp"
+#include "rosetta/swift.hpp"
+#include "rosetta/pascal.hpp"
+#include "rosetta/dart.hpp"
+#include "rosetta/ada.hpp"
+#include "rosetta/objc.hpp"
+#include "rosetta/prolog.hpp"
+#include "rosetta/haskell.hpp"
 #include "rosetta/fortran.hpp"
 #include "rosetta/common_lisp.hpp"
 #include "rosetta/tcl.hpp"
@@ -37,7 +44,7 @@ namespace {
 constexpr const char* usage = R"(Usage: rosetta HEADER --module NAME -o OUTPUT [options] [-- CLANG_FLAGS...]
 
 Generate native language bindings from a C++ header.
-  --language lua|r|python|javascript|ruby|octave|julia|java|csharp|visual-basic|rust|php|perl|fortran|common-lisp|tcl|guile|ocaml|go|apl|cobol  Target language (default: lua)
+  --language lua|r|python|javascript|ruby|octave|julia|java|csharp|visual-basic|rust|php|perl|swift|pascal|dart|ada|objective-c|prolog|haskell|fortran|common-lisp|tcl|guile|ocaml|go|apl|cobol  Target language (default: lua)
   --object-system r6|s3|s4  R object system (default: r6)
   --r-output PATH       Generated R interface (default: OUTPUT with extension .R)
   --julia-output PATH   Generated Julia interface (default: OUTPUT with extension .jl)
@@ -139,6 +146,47 @@ Generate native language bindings from a C++ header.
                         the library with Perl's headers (perl -MExtUtils::Embed -e ccopts)
   --perl-package NAME   Perl package (default: MODULE in PascalCase; a::b nests)
   --perl-library NAME   Shared library base name the Perl module loads (default: MODULE)
+  --swift-output DIR    Generated Swift package (--language swift; default: MODULE beside OUTPUT):
+                        Package.swift, Sources/SWIFTMODULE/SWIFTMODULE.swift (the declared output), its
+                        runtime Rosetta.swift and the C module declaring the library's entry points;
+                        classes Swift subclasses override, throwing calls, operators, inout writebacks
+                        and DocC comments from the C++ documentation
+  --swift-module NAME   Swift module, package and product name (default: MODULE in PascalCase)
+  --swift-library NAME  Shared library the package links as -lNAME (default: MODULE)
+  --pascal-output PATH  Generated Free Pascal unit (--language pascal; default: MODULE.pas beside OUTPUT):
+                        the runtime, classes over TNativeObject (Pascal subclasses override virtual
+                        methods), scoped enums, records and arrays, var parameters, nested procedural
+                        callbacks, ENativeError and XML doc comments; it links the library (external)
+  --pascal-unit NAME    Pascal unit name (default: MODULE)
+  --dart-output DIR     Generated Dart package (--language dart; default: MODULE beside OUTPUT):
+                        pubspec.yaml, lib/PACKAGE.dart (the declared output) and its runtime
+                        lib/src/rosetta.dart; classes over NativeObject (Dart subclasses override
+                        virtual methods), overloads as optional parameters, extension type enums
+  --ada-output DIR      Generated Ada package (--language ada; default: OUTPUT's directory): PACKAGE.ads
+                        (the declared output), PACKAGE.adb and PACKAGE.gpr; tagged types over
+                        Native_Object_Record (Ada type extensions override C++ virtual methods)
+  --ada-package NAME    Ada package name (default: MODULE in Ada_Case)
+  --ada-library NAME    Native library the package links (default: MODULE)
+  --objc-output DIR     Generated Objective-C files (--language objective-c; default: OUTPUT's
+                        directory): PREFIX.h (the declared output) and PREFIX.m; classes over
+                        PREFIXObject (Objective-C subclasses override virtual methods), one
+                        selector per argument count, blocks for std::function
+  --objc-prefix NAME    Prefix of the Objective-C names and files (default: MODULE in PascalCase)
+  --objc-library NAME   Native library to link (default: MODULE)
+  --prolog-output PATH  Generated SWI-Prolog module (--language prolog; default: MODULE.pl beside OUTPUT):
+                        predicates for the functions, methods (the object first), constructors, fields
+                        and constants, extended objects overriding virtual methods, PlDoc and the runtime;
+                        OUTPUT carries the foreign glue, so build the library with SWI-Prolog's headers
+  --prolog-module NAME  Prolog module (default: MODULE in snake_case)
+  --prolog-library NAME Shared library base name the Prolog module loads (default: MODULE)
+  --haskell-output PATH Generated Haskell module (--language haskell; default: HASKELL_MODULE.hs beside
+                        OUTPUT): IO functions for the functions, methods, constructors, fields and
+                        constants, a type class per C++ class, extended objects overriding virtual
+                        methods, Haddock; its runtime module goes to STEM/Rosetta.hs beside it
+  --haskell-module NAME Haskell module (default: MODULE in PascalCase); link the program with -lMODULE
+  --dart-package NAME   Dart package name (default: MODULE in snake_case)
+  --dart-library NAME   Native library the package loads (default: MODULE)
+  --pascal-library NAME Shared library the unit links (default: MODULE)
   --java-package NAME   Java package (default: unnamed package; --java-api full: MODULE)
   --java-api minimal|full Java binding style (default: minimal); full binds classes with inheritance,
                          overrides, containers, callbacks and Javadoc; --java-output is then the
@@ -192,6 +240,13 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         std::string rust_output, rust_crate, rust_library;
         std::string php_output, php_namespace, php_library;
         std::string perl_output, perl_package, perl_library;
+        std::string swift_output, swift_module, swift_library;
+        std::string pascal_output, pascal_unit, pascal_library;
+        std::string dart_output, dart_package, dart_library;
+        std::string ada_output, ada_package, ada_library;
+        std::string objc_output, objc_prefix_name, objc_library;
+        std::string prolog_output, prolog_module, prolog_library;
+        std::string haskell_output, haskell_module;
         for (std::size_t i = 0; i < arguments.size(); ++i) {
             const auto& arg = arguments[i];
             if (arg == "--") {
@@ -219,6 +274,48 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
                 if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
                     throw BindingError("missing value for " + arg);
                 (arg == "--rust-output" ? rust_output : arg == "--rust-crate" ? rust_crate : rust_library) = arguments[i];
+                continue;
+            }
+            if (arg == "--prolog-output" || arg == "--prolog-module" || arg == "--prolog-library") {
+                if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
+                    throw BindingError("missing value for " + arg);
+                (arg == "--prolog-output" ? prolog_output : arg == "--prolog-module" ? prolog_module : prolog_library) = arguments[i];
+                continue;
+            }
+            if (arg == "--haskell-output" || arg == "--haskell-module") {
+                if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
+                    throw BindingError("missing value for " + arg);
+                (arg == "--haskell-output" ? haskell_output : haskell_module) = arguments[i];
+                continue;
+            }
+            if (arg == "--objc-output" || arg == "--objc-prefix" || arg == "--objc-library") {
+                if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
+                    throw BindingError("missing value for " + arg);
+                (arg == "--objc-output" ? objc_output : arg == "--objc-prefix" ? objc_prefix_name : objc_library) = arguments[i];
+                continue;
+            }
+            if (arg == "--ada-output" || arg == "--ada-package" || arg == "--ada-library") {
+                if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
+                    throw BindingError("missing value for " + arg);
+                (arg == "--ada-output" ? ada_output : arg == "--ada-package" ? ada_package : ada_library) = arguments[i];
+                continue;
+            }
+            if (arg == "--dart-output" || arg == "--dart-package" || arg == "--dart-library") {
+                if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
+                    throw BindingError("missing value for " + arg);
+                (arg == "--dart-output" ? dart_output : arg == "--dart-package" ? dart_package : dart_library) = arguments[i];
+                continue;
+            }
+            if (arg == "--pascal-output" || arg == "--pascal-unit" || arg == "--pascal-library") {
+                if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
+                    throw BindingError("missing value for " + arg);
+                (arg == "--pascal-output" ? pascal_output : arg == "--pascal-unit" ? pascal_unit : pascal_library) = arguments[i];
+                continue;
+            }
+            if (arg == "--swift-output" || arg == "--swift-module" || arg == "--swift-library") {
+                if (++i == arguments.size() || arguments[i].empty() || arguments[i].front() == '-')
+                    throw BindingError("missing value for " + arg);
+                (arg == "--swift-output" ? swift_output : arg == "--swift-module" ? swift_module : swift_library) = arguments[i];
                 continue;
             }
             if (arg == "--perl-output" || arg == "--perl-package" || arg == "--perl-library") {
@@ -342,7 +439,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         if (language == "vb" || language == "vbnet" || language == "visualbasic") language = "visual-basic";
         if (language == "rs") language = "rust";
         if (language == "pl") language = "perl";
-        if (language != "lua" && language != "r" && language != "python" && language != "javascript" && language != "ruby" && language != "octave" && language != "julia" && language != "java" && language != "csharp" && language != "visual-basic" && language != "rust" && language != "php" && language != "perl" && language != "fortran" && language != "common-lisp" && language != "tcl" && language != "guile" && language != "ocaml" && language != "go" && language != "apl" && language != "cobol") throw BindingError("unsupported language: " + language);
+        if (language != "lua" && language != "r" && language != "python" && language != "javascript" && language != "ruby" && language != "octave" && language != "julia" && language != "java" && language != "csharp" && language != "visual-basic" && language != "rust" && language != "php" && language != "perl" && language != "swift" && language != "pascal" && language != "dart" && language != "ada" && language != "objective-c" && language != "prolog" && language != "haskell" && language != "fortran" && language != "common-lisp" && language != "tcl" && language != "guile" && language != "ocaml" && language != "go" && language != "apl" && language != "cobol") throw BindingError("unsupported language: " + language);
         if (language != "lua" && (!lua_api.empty() || !lua_meta.empty())) throw BindingError("--lua-api and --lua-meta require --language lua");
         if (!lua_api.empty() && lua_api != "minimal" && lua_api != "full") throw BindingError("--lua-api must be minimal or full");
         const bool lua_full = language == "lua" && lua_api == "full";
@@ -377,6 +474,38 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         if (language != "perl" && (!perl_output.empty() || !perl_package.empty() || !perl_library.empty()))
             throw BindingError("--perl-output, --perl-package and --perl-library require --language perl");
         if (language == "perl" && perl_output.empty()) perl_output = (std::filesystem::path(output).parent_path() / (name + ".pm")).string();
+        if (language != "swift" && (!swift_output.empty() || !swift_module.empty() || !swift_library.empty()))
+            throw BindingError("--swift-output, --swift-module and --swift-library require --language swift");
+        if (language != "pascal" && (!pascal_output.empty() || !pascal_unit.empty() || !pascal_library.empty()))
+            throw BindingError("--pascal-output, --pascal-unit and --pascal-library require --language pascal");
+        if (language == "pascal" && pascal_output.empty())
+            pascal_output = (std::filesystem::path(output).parent_path() / ((pascal_unit.empty() ? name : pascal_unit) + ".pas")).string();
+        if (language != "ada" && (!ada_output.empty() || !ada_package.empty() || !ada_library.empty()))
+            throw BindingError("--ada-output, --ada-package and --ada-library require --language ada");
+        if (language == "ada" && ada_output.empty()) ada_output = std::filesystem::path(output).parent_path().string();
+        if (language != "prolog" && (!prolog_output.empty() || !prolog_module.empty() || !prolog_library.empty()))
+            throw BindingError("--prolog-output, --prolog-module and --prolog-library require --language prolog");
+        if (language == "prolog" && prolog_output.empty()) prolog_output = (std::filesystem::path(output).parent_path() / (name + ".pl")).string();
+        if (language != "haskell" && (!haskell_output.empty() || !haskell_module.empty()))
+            throw BindingError("--haskell-output and --haskell-module require --language haskell");
+        if (language == "haskell" && haskell_output.empty()) {
+            const auto module_name = haskell_module.empty() ? haskell_module_name(name) : haskell_module;
+            const auto last = module_name.substr(module_name.find_last_of('.') == std::string::npos ? 0 : module_name.find_last_of('.') + 1);
+            haskell_output = (std::filesystem::path(output).parent_path() / (last + ".hs")).string();
+        }
+        if (language != "objective-c" && (!objc_output.empty() || !objc_prefix_name.empty() || !objc_library.empty()))
+            throw BindingError("--objc-output, --objc-prefix and --objc-library require --language objective-c");
+        if (language == "objective-c" && objc_output.empty()) objc_output = std::filesystem::path(output).parent_path().string();
+        const std::string objc_api = language == "objective-c" ? (std::filesystem::path(objc_output) / ((objc_prefix_name.empty() ? objc_prefix(name) : objc_prefix_name) + ".h")).string() : std::string();
+        const std::string ada_api = language == "ada" ? (std::filesystem::path(ada_output) / ada_spec_file(ada_package.empty() ? ada_package_name(name) : ada_package)).string() : std::string();
+        if (language != "dart" && (!dart_output.empty() || !dart_package.empty() || !dart_library.empty()))
+            throw BindingError("--dart-output, --dart-package and --dart-library require --language dart");
+        if (language == "dart" && dart_output.empty()) dart_output = (std::filesystem::path(output).parent_path() / name).string();
+        const auto dart_name = dart_package.empty() ? dart_package_name(name) : dart_package;
+        const std::string dart_api = language == "dart" ? (std::filesystem::path(dart_output) / "lib" / (dart_name + ".dart")).string() : std::string();
+        if (language == "swift" && swift_output.empty()) swift_output = (std::filesystem::path(output).parent_path() / name).string();
+        const auto swift_name = swift_module.empty() ? swift_module_name(name) : swift_module;
+        const std::string swift_api = language == "swift" ? (std::filesystem::path(swift_output) / "Sources" / swift_name / (swift_name + ".swift")).string() : std::string();
         if (language != "java" && (!java_api.empty() || !java_library.empty())) throw BindingError("--java-api and --java-library require --language java");
         if (!java_api.empty() && java_api != "minimal" && java_api != "full") throw BindingError("--java-api must be minimal or full");
         const bool java_full = language == "java" && java_api == "full";
@@ -437,8 +566,8 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         const bool go_full = language == "go" && go_api == "full";
         if (!go_full && (!go_package.empty() || !go_module_path.empty() || !go_library.empty()))
             throw BindingError("--go-package, --go-module-path and --go-library require --go-api full");
-        if (language != "python" && language != "javascript" && language != "visual-basic" && language != "rust" && language != "php" && language != "perl" && !lua_full && !lisp_full && !julia_full && !csharp_full && !cobol_full && !fortran_full && !ruby_full && !guile_full && !octave_full && !tcl_full && !java_full && !go_full && !ocaml_full && !apl_full && !(language == "r" && object_system != "s3" && object_system != "s4") && python_parts != 1)
-            throw BindingError("--parts requires --language python, javascript, r (R6), lua (--lua-api full), common-lisp (--lisp-api full), julia (--julia-api full), csharp (--csharp-api full), visual-basic, rust, php, perl, fortran (--fortran-api full), ruby (--ruby-api full), guile (--guile-api full), octave (--octave-api full), tcl (--tcl-api full), java (--java-api full), go (--go-api full), ocaml (--ocaml-api full), apl (--apl-api full) or cobol (--cobol-api full)");
+        if (language != "python" && language != "javascript" && language != "visual-basic" && language != "rust" && language != "php" && language != "perl" && language != "swift" && language != "pascal" && language != "dart" && language != "ada" && language != "objective-c" && language != "prolog" && language != "haskell" && !lua_full && !lisp_full && !julia_full && !csharp_full && !cobol_full && !fortran_full && !ruby_full && !guile_full && !octave_full && !tcl_full && !java_full && !go_full && !ocaml_full && !apl_full && !(language == "r" && object_system != "s3" && object_system != "s4") && python_parts != 1)
+            throw BindingError("--parts requires --language python, javascript, r (R6), lua (--lua-api full), common-lisp (--lisp-api full), julia (--julia-api full), csharp (--csharp-api full), visual-basic, rust, php, perl, swift, pascal, dart, ada, objective-c, prolog, haskell, fortran (--fortran-api full), ruby (--ruby-api full), guile (--guile-api full), octave (--octave-api full), tcl (--tcl-api full), java (--java-api full), go (--go-api full), ocaml (--ocaml-api full), apl (--apl-api full) or cobol (--cobol-api full)");
         if (r_package && (language != "r" || object_system == "s3" || object_system == "s4"))
             throw BindingError("--r-package requires --language r with the R6 object system");
         if (language != "r" && (!object_system.empty() || !r_output.empty()))
@@ -543,7 +672,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
         if (language == "csharp" && csharp_output.empty()) csharp_output = (std::filesystem::path(output).parent_path() / (name + ".cs")).string();
         if (language != "fortran" && !fortran_output.empty()) throw BindingError("--fortran-output requires --language fortran");
         if (language == "fortran" && fortran_output.empty()) fortran_output = (std::filesystem::path(output).parent_path() / (name + ".f90")).string();
-        const auto interface_output = tcl_full ? tcl_output : octave_full ? octave_contents : language == "ruby" ? ruby_output : language == "javascript" ? js_types : language == "cobol" ? cobol_output : language == "apl" ? gnu_apl_output : language == "go" ? go_output : language == "ocaml" ? ocaml_output : language == "guile" ? guile_output : language == "common-lisp" ? lisp_output : language == "fortran" ? fortran_output : language == "csharp" ? csharp_output : language == "visual-basic" ? vb_output : language == "rust" ? rust_lib : language == "php" ? php_output : language == "perl" ? perl_output : java_full ? java_package_info : language == "java" ? java_output : language == "julia" ? julia_output : language == "lua" ? lua_meta : r_output;
+        const auto interface_output = tcl_full ? tcl_output : octave_full ? octave_contents : language == "ruby" ? ruby_output : language == "javascript" ? js_types : language == "cobol" ? cobol_output : language == "apl" ? gnu_apl_output : language == "go" ? go_output : language == "ocaml" ? ocaml_output : language == "guile" ? guile_output : language == "common-lisp" ? lisp_output : language == "fortran" ? fortran_output : language == "csharp" ? csharp_output : language == "visual-basic" ? vb_output : language == "rust" ? rust_lib : language == "php" ? php_output : language == "perl" ? perl_output : language == "swift" ? swift_api : language == "pascal" ? pascal_output : language == "dart" ? dart_api : language == "ada" ? ada_api : language == "objective-c" ? objc_api : language == "prolog" ? prolog_output : language == "haskell" ? haskell_output : java_full ? java_package_info : language == "java" ? java_output : language == "julia" ? julia_output : language == "lua" ? lua_meta : r_output;
         if (database_path.empty() && (!translation_unit.empty() || command_index))
             throw BindingError("--translation-unit and --command-index require --compile-commands");
         const auto compilation = database_path.empty() ? std::optional<CompilationCommand>{} :
@@ -596,7 +725,7 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
             if (!policy_path.empty()) protected_paths.push_back(std::filesystem::canonical(policy_path));
             if (compilation) { protected_paths.push_back(compilation->database); protected_paths.push_back(compilation->file); }
             for (const auto& path : protected_paths)
-                if (same_file(interface_path, path)) throw BindingError(language == "cobol" ? "COBOL copybook and inputs/outputs must have distinct paths" : language == "apl" ? "APL scripts and inputs/outputs must have distinct paths" : language == "go" ? "Go package file and inputs/outputs must have distinct paths" : language == "ocaml" ? "OCaml module and inputs/outputs must have distinct paths" : language == "guile" ? "Guile module and inputs/outputs must have distinct paths" : language == "common-lisp" ? "Common Lisp interface and inputs/outputs must have distinct paths" : language == "fortran" ? "Fortran interface and inputs/outputs must have distinct paths" : language == "csharp" ? "C# interface and inputs/outputs must have distinct paths" : language == "visual-basic" ? "Visual Basic interface and inputs/outputs must have distinct paths" : language == "rust" ? "Rust crate and inputs/outputs must have distinct paths" : language == "php" ? "PHP file and inputs/outputs must have distinct paths" : language == "perl" ? "Perl module and inputs/outputs must have distinct paths" : language == "java" ? "Java interface and inputs/outputs must have distinct paths" :
+                if (same_file(interface_path, path)) throw BindingError(language == "cobol" ? "COBOL copybook and inputs/outputs must have distinct paths" : language == "apl" ? "APL scripts and inputs/outputs must have distinct paths" : language == "go" ? "Go package file and inputs/outputs must have distinct paths" : language == "ocaml" ? "OCaml module and inputs/outputs must have distinct paths" : language == "guile" ? "Guile module and inputs/outputs must have distinct paths" : language == "common-lisp" ? "Common Lisp interface and inputs/outputs must have distinct paths" : language == "fortran" ? "Fortran interface and inputs/outputs must have distinct paths" : language == "csharp" ? "C# interface and inputs/outputs must have distinct paths" : language == "visual-basic" ? "Visual Basic interface and inputs/outputs must have distinct paths" : language == "rust" ? "Rust crate and inputs/outputs must have distinct paths" : language == "php" ? "PHP file and inputs/outputs must have distinct paths" : language == "perl" ? "Perl module and inputs/outputs must have distinct paths" : language == "prolog" ? "Prolog module and inputs/outputs must have distinct paths" : language == "haskell" ? "Haskell module and inputs/outputs must have distinct paths" : language == "swift" ? "Swift package and inputs/outputs must have distinct paths" : language == "pascal" ? "Pascal unit and inputs/outputs must have distinct paths" : language == "dart" ? "Dart package and inputs/outputs must have distinct paths" : language == "ada" ? "Ada package and inputs/outputs must have distinct paths" : language == "objective-c" ? "Objective-C files and inputs/outputs must have distinct paths" : language == "java" ? "Java interface and inputs/outputs must have distinct paths" :
                     language == "julia" ? "Julia interface and inputs/outputs must have distinct paths" : language == "javascript" ? "TypeScript declarations and inputs/outputs must have distinct paths" : language == "lua" ? "Lua stub and inputs/outputs must have distinct paths" : "R interface and inputs/outputs must have distinct paths");
         }
         const auto policy = policy_path.empty() ? BindingPolicy{} : load_policy(policy_path);
@@ -913,6 +1042,101 @@ int run_cli(const std::vector<std::string>& arguments, std::ostream& out, std::o
                 extra_sources.emplace_back(path, perl.parts[i]);
             }
             language_interface = perl.perl;
+        } else if (language == "prolog") {
+            PrologOptions options;
+            options.parts = python_parts;
+            options.module = prolog_module;
+            options.library = prolog_library;
+            const auto prolog = generate_prolog(module, name, skip, policy, options);
+            generated = {prolog.source, prolog.diagnostics};
+            for (std::size_t i = 0; i < prolog.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, prolog.parts[i]);
+            }
+            language_interface = prolog.prolog;
+        } else if (language == "haskell") {
+            HaskellOptions options;
+            options.parts = python_parts;
+            options.module = haskell_module;
+            const auto haskell = generate_haskell(module, name, skip, policy, options);
+            generated = {haskell.source, haskell.diagnostics};
+            for (std::size_t i = 0; i < haskell.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, haskell.parts[i]);
+            }
+            language_interface = haskell.haskell;
+            package_files.emplace_back(interface_path.parent_path() / interface_path.stem() / "Rosetta.hs", haskell.runtime);
+        } else if (language == "pascal") {
+            PascalOptions options;
+            options.parts = python_parts;
+            options.unit = pascal_unit;
+            options.library = pascal_library;
+            const auto pascal = generate_pascal(module, name, skip, policy, options);
+            generated = {pascal.source, pascal.diagnostics};
+            for (std::size_t i = 0; i < pascal.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, pascal.parts[i]);
+            }
+            language_interface = pascal.pascal;
+        } else if (language == "dart") {
+            DartOptions options;
+            options.parts = python_parts;
+            options.package = dart_package;
+            options.library = dart_library;
+            const auto dart = generate_dart(module, name, skip, policy, options);
+            generated = {dart.source, dart.diagnostics};
+            for (std::size_t i = 0; i < dart.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, dart.parts[i]);
+            }
+            language_interface = dart.dart;
+            for (const auto& [relative, text] : dart.files) package_files.emplace_back(std::filesystem::path(dart_output) / relative, text);
+        } else if (language == "ada") {
+            AdaOptions options;
+            options.parts = python_parts;
+            options.package = ada_package;
+            options.library = ada_library;
+            const auto ada = generate_ada(module, name, skip, policy, options);
+            generated = {ada.source, ada.diagnostics};
+            for (std::size_t i = 0; i < ada.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, ada.parts[i]);
+            }
+            language_interface = ada.spec;
+            for (const auto& [relative, text] : ada.files) package_files.emplace_back(std::filesystem::path(ada_output) / relative, text);
+        } else if (language == "objective-c") {
+            ObjcOptions options;
+            options.parts = python_parts;
+            options.prefix = objc_prefix_name;
+            options.library = objc_library;
+            const auto objc = generate_objc(module, name, skip, policy, options);
+            generated = {objc.source, objc.diagnostics};
+            for (std::size_t i = 0; i < objc.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, objc.parts[i]);
+            }
+            language_interface = objc.header;
+            for (const auto& [relative, text] : objc.files) package_files.emplace_back(std::filesystem::path(objc_output) / relative, text);
+        } else if (language == "swift") {
+            SwiftOptions options;
+            options.parts = python_parts;
+            options.module = swift_module;
+            options.library = swift_library;
+            const auto swift = generate_swift(module, name, skip, policy, options);
+            generated = {swift.source, swift.diagnostics};
+            for (std::size_t i = 0; i < swift.parts.size(); ++i) {
+                auto path = output_path;
+                path.replace_filename(output_path.stem().string() + "_" + std::to_string(i + 1) + output_path.extension().string());
+                extra_sources.emplace_back(path, swift.parts[i]);
+            }
+            language_interface = swift.swift;
+            for (const auto& [relative, text] : swift.files) package_files.emplace_back(std::filesystem::path(swift_output) / relative, text);
         } else if (language == "csharp") {
             const auto csharp = generate_csharp(module, name, skip, policy, csharp_namespace);
             generated = {csharp.source, csharp.diagnostics};

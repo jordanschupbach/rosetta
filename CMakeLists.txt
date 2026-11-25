@@ -46,6 +46,13 @@ add_library(rosetta_core
     src/rust_full.cpp
     src/php_full.cpp
     src/perl_full.cpp
+    src/swift_full.cpp
+    src/pascal_full.cpp
+    src/ada_full.cpp
+    src/objc_full.cpp
+    src/prolog_full.cpp
+    src/haskell_full.cpp
+    src/dart_full.cpp
     src/fortran.cpp
     src/fortran_full.cpp
     src/csharp.cpp
@@ -90,6 +97,13 @@ include(cmake/VisualBasicExample.cmake)
 include(cmake/RustExample.cmake)
 include(cmake/PhpExample.cmake)
 include(cmake/PerlExample.cmake)
+include(cmake/PrologExample.cmake)
+include(cmake/HaskellExample.cmake)
+include(cmake/SwiftExample.cmake)
+include(cmake/PascalExample.cmake)
+include(cmake/DartExample.cmake)
+include(cmake/AdaExample.cmake)
+include(cmake/ObjcExample.cmake)
 include(cmake/FortranExample.cmake)
 include(cmake/CommonLispExample.cmake)
 include(cmake/TclExample.cmake)
@@ -130,6 +144,41 @@ if(BUILD_TESTING)
     target_include_directories(rosetta_perl_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
     rosetta_warnings(rosetta_perl_capability_tests)
     add_test(NAME perl_capabilities COMMAND rosetta_perl_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_swift_capability_tests tests/test_swift_capabilities.cpp)
+    target_link_libraries(rosetta_swift_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_swift_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_swift_capability_tests)
+    add_test(NAME swift_capabilities COMMAND rosetta_swift_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_pascal_capability_tests tests/test_pascal_capabilities.cpp)
+    target_link_libraries(rosetta_pascal_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_pascal_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_pascal_capability_tests)
+    add_test(NAME pascal_capabilities COMMAND rosetta_pascal_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_dart_capability_tests tests/test_dart_capabilities.cpp)
+    target_link_libraries(rosetta_dart_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_dart_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_dart_capability_tests)
+    add_test(NAME dart_capabilities COMMAND rosetta_dart_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_ada_capability_tests tests/test_ada_capabilities.cpp)
+    target_link_libraries(rosetta_ada_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_ada_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_ada_capability_tests)
+    add_test(NAME ada_capabilities COMMAND rosetta_ada_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_objc_capability_tests tests/test_objc_capabilities.cpp)
+    target_link_libraries(rosetta_objc_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_objc_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_objc_capability_tests)
+    add_test(NAME objc_capabilities COMMAND rosetta_objc_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_prolog_capability_tests tests/test_prolog_capabilities.cpp)
+    target_link_libraries(rosetta_prolog_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_prolog_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_prolog_capability_tests)
+    add_test(NAME prolog_capabilities COMMAND rosetta_prolog_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
+    add_executable(rosetta_haskell_capability_tests tests/test_haskell_capabilities.cpp)
+    target_link_libraries(rosetta_haskell_capability_tests PRIVATE rosetta_core)
+    target_include_directories(rosetta_haskell_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    rosetta_warnings(rosetta_haskell_capability_tests)
+    add_test(NAME haskell_capabilities COMMAND rosetta_haskell_capability_tests "${ROSETTA_CLANG_EXECUTABLE}")
     add_executable(rosetta_java_capability_tests tests/test_java_capabilities.cpp)
     target_link_libraries(rosetta_java_capability_tests PRIVATE rosetta_core)
     target_include_directories(rosetta_java_capability_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")

@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "select": "all",
+  "names": "flat",
+  "modules": { "names::data": "data" }
+}
